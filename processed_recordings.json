@@ -1,0 +1,292 @@
+{
+  "Cruz Services": {
+    "025d5f5e-0f8f-43c7-b788-21adb8fa983b": {
+      "processed_at": "2026-05-12T16:30:12.035Z",
+      "client": "UNKNOWN",
+      "confidence": "low"
+    },
+    "3b3ae79f-1528-42fe-b50a-650ccdbb4c34": {
+      "processed_at": "2026-05-12T16:30:23.357Z",
+      "client": "UNKNOWN",
+      "confidence": "low"
+    },
+    "5da7c51b-8e9f-46eb-8d16-68cbe499a004": {
+      "processed_at": "2026-05-12T16:30:46.365Z",
+      "client": "UNKNOWN",
+      "confidence": "low"
+    },
+    "cd804b4a-f513-4bb7-84bc-71f6dc4339e2": {
+      "processed_at": "2026-05-12T16:31:09.353Z",
+      "client": "Jesse and Eva Gallan",
+      "confidence": "low"
+    },
+    "1b647989-4b29-4ea6-82be-1774e81000c0": {
+      "processed_at": "2026-05-12T16:31:47.820Z",
+      "client": "UNKNOWN",
+      "confidence": "low"
+    },
+    "fef37f08-70db-4682-818b-5cfcec9d883d": {
+      "processed_at": "2026-05-12T16:31:53.369Z",
+      "client": "UNKNOWN",
+      "confidence": "high"
+    },
+    "43bf2c77-a6b2-47a6-9b13-20e3aa17eb71": {
+      "processed_at": "2026-05-12T16:32:18.195Z",
+      "client": "UNKNOWN",
+      "confidence": "low"
+    },
+    "cef470fe-e5ad-43af-8f08-1d800bb4a7de": {
+      "processed_at": "2026-05-12T16:32:27.808Z",
+      "client": "UNKNOWN",
+      "confidence": "high"
+    },
+    "af6c43d5-34bf-4c85-9db3-e51aef160e9f": {
+      "processed_at": "2026-05-12T16:32:40.672Z",
+      "client": "UNKNOWN",
+      "confidence": "high"
+    },
+    "5e3c4e28-148c-4f5e-9e80-e050e28d2323": {
+      "processed_at": "2026-05-12T16:33:46.879Z",
+      "client": "Jesse and Eva Gallan",
+      "confidence": "low"
+    },
+    "935a2bdd-183a-4da1-bffe-6d8b9043fae3": {
+      "processed_at": "2026-05-12T16:35:08.629Z",
+      "skipped": "no_segments"
+    },
+    "d8ec88aa-5d35-4440-b54b-9507e3a54cca": {
+      "processed_at": "2026-05-12T16:35:09.649Z",
+      "skipped": "no_segments"
+    },
+    "baf44cce-dfdc-4ad9-909b-a6dc87925b29": {
+      "processed_at": "2026-05-12T16:35:11.457Z",
+      "skipped": "no_segments"
+    },
+    "b5063a4d-c304-4ae5-8144-53a689942b7d": {
+      "processed_at": "2026-05-12T16:35:12.731Z",
+      "skipped": "no_segments"
+    },
+    "cb9ad313-4fba-48bb-bb74-e1106e22583f": {
+      "processed_at": "2026-05-12T16:35:25.986Z",
+      "client": "UNKNOWN",
+      "confidence": "low"
+    },
+    "8c8b4860-8737-4fd6-b86b-f76396c3e07e": {
+      "processed_at": "2026-05-12T16:35:15.192Z",
+      "skipped": "no_segments"
+    },
+    "8c3c24c6-8766-4daf-bec4-36d094f21d90": {
+      "processed_at": "2026-05-12T16:35:42.762Z",
+      "client": "UNKNOWN",
+      "confidence": "low"
+    },
+    "d6313978-a757-4875-8ab1-dd49415e1f42": {
+      "processed_at": "2026-05-12T16:35:58.855Z",
+      "client": "UNKNOWN",
+      "confidence": "low"
+    },
+    "aa3d3e86-b734-40a8-94ca-2447ff4bcf16": {
+      "processed_at": "2026-05-12T17:04:11.937Z",
+      "client": "UNKNOWN",
+      "confidence": "low"
+    },
+    "fc652723-e10d-4b4c-90c5-94658830684f": {
+      "processed_at": "2026-05-12T17:11:53.534Z",
+      "client": "Brian Harris",
+      "confidence": "high"
+    },
+    "1dfa5760-1957-44c9-9c4d-a80e369708ad": {
+      "processed_at": "2026-05-12T17:15:19.056Z",
+      "client": "Brian Harris",
+      "confidence": "high"
+    },
+    "f7c8a8f9-7983-4e6d-a7a2-bb95104cc239": {
+      "processed_at": "2026-05-12T17:18:35.154Z",
+      "client": "Brian Harris",
+      "confidence": "high"
+    },
+    "c62f9306-ee30-4f71-8a94-e21ac6404cde": {
+      "processed_at": "2026-05-12T21:05:17.601Z",
+      "skipped": "no_segments"
+    },
+    "d6ff6e2a-1a25-4f14-85f5-d2b5ad44506e": {
+      "processed_at": "2026-05-12T21:05:18.381Z",
+      "skipped": "no_segments"
+    },
+    "d43156d9-56ed-4627-8b3c-1dd364ec7bcd": {
+      "processed_at": "2026-05-12T22:33:24.001Z",
+      "client": "Brian Harris",
+      "confidence": "high"
+    },
+    "b9f8e95e-71cf-49c0-92e2-65da92c3a15a": {
+      "processed_at": "2026-05-13T17:28:48.391Z",
+      "client": "Brian Harris",
+      "confidence": "medium"
+    },
+    "aec85e09-e326-4a00-a001-c1eb1dd36d7a": {
+      "processed_at": "2026-05-13T20:29:01.322Z",
+      "client": "UNKNOWN",
+      "confidence": "low"
+    },
+    "9fdaff68-1a03-41d2-8271-7bf0f0648785": {
+      "processed_at": "2026-05-13T20:29:45.974Z",
+      "client": "UNKNOWN",
+      "confidence": "low"
+    },
+    "038f83b4-7940-4986-828d-12193e9e89c9": {
+      "processed_at": "2026-05-13T20:30:01.186Z",
+      "client": "UNKNOWN",
+      "confidence": "low"
+    },
+    "3474bc5c-169b-49f2-a124-0f3ecbc06e88": {
+      "processed_at": "2026-05-13T20:30:21.703Z",
+      "client": "Jack Mennella",
+      "confidence": "medium"
+    },
+    "e2da24dd-be7f-4e7e-81b5-2e487a416ded": {
+      "processed_at": "2026-05-13T20:30:43.493Z",
+      "client": "Jesse and Eva Gallan",
+      "confidence": "high"
+    },
+    "0026e003-9345-437a-a7f8-9e7bc9530127": {
+      "processed_at": "2026-05-13T20:31:01.407Z",
+      "client": "UNKNOWN",
+      "confidence": "low"
+    },
+    "1197a692-2306-4a2d-8903-ac84782851ee": {
+      "processed_at": "2026-05-13T20:31:16.699Z",
+      "client": "UNKNOWN",
+      "confidence": "low"
+    },
+    "872182e3-0fc9-4b63-aff6-c7ea6ecaeade": {
+      "processed_at": "2026-05-13T20:31:29.391Z",
+      "client": "UNKNOWN",
+      "confidence": "low"
+    },
+    "84382bbb-c880-4d52-a908-eb0783f9eb43": {
+      "processed_at": "2026-05-13T20:31:33.708Z",
+      "client": "UNKNOWN",
+      "confidence": "low"
+    },
+    "f54928a2-06f0-4687-8571-b982f160adeb": {
+      "processed_at": "2026-05-13T21:00:40.554Z",
+      "client": "UNKNOWN",
+      "confidence": "low"
+    },
+    "0bd77765-e0a8-4a7c-93f3-5dfc04b28895": {
+      "processed_at": "2026-05-13T21:14:44.618Z",
+      "client": "UNKNOWN",
+      "confidence": "low"
+    },
+    "c84d16fc-7f7d-46d4-a397-2f2da4e59b0f": {
+      "processed_at": "2026-05-13T21:28:52.985Z",
+      "client": "UNKNOWN",
+      "confidence": "low"
+    },
+    "2116d196-5770-48bb-9076-a47621f82da1": {
+      "processed_at": "2026-05-14T11:13:37.829Z",
+      "client": "UNKNOWN",
+      "confidence": "low"
+    },
+    "cc9ffee0-872f-42f8-9571-6bb038698415": {
+      "processed_at": "2026-05-14T19:14:23.264Z",
+      "client": "UNKNOWN",
+      "confidence": "low"
+    },
+    "ee6cdc3d-4b89-433f-8410-31e786e032fe": {
+      "processed_at": "2026-05-14T19:15:01.863Z",
+      "client": "UNKNOWN",
+      "confidence": "low"
+    },
+    "c0614e9a-ac25-4e0e-9b54-cfcf4acc55fc": {
+      "processed_at": "2026-05-14T19:15:15.934Z",
+      "client": "Wendy and Kevin Callery",
+      "confidence": "low"
+    },
+    "14e00bf0-7ea0-4c7d-b170-36dd1df560a4": {
+      "processed_at": "2026-05-14T19:15:32.631Z",
+      "client": "UNKNOWN",
+      "confidence": "low"
+    },
+    "bc3ca4dc-04af-44c3-9565-12a65b0999d7": {
+      "processed_at": "2026-05-14T19:15:49.045Z",
+      "client": "UNKNOWN",
+      "confidence": "low"
+    },
+    "70f60a65-acc7-4bf0-ab08-11076fd1ca55": {
+      "processed_at": "2026-05-14T19:15:57.630Z",
+      "client": "UNKNOWN",
+      "confidence": "low"
+    },
+    "3a59c54d-5caa-43d7-8982-53aefd308d1c": {
+      "processed_at": "2026-05-14T19:28:50.528Z",
+      "client": "UNKNOWN",
+      "confidence": "low"
+    },
+    "f5c00218-4908-40f5-a751-32ca6f228d68": {
+      "processed_at": "2026-05-14T19:28:59.677Z",
+      "client": "UNKNOWN",
+      "confidence": "low"
+    },
+    "bec172dc-ee52-4995-9c5c-cfd4b198620f": {
+      "processed_at": "2026-05-14T19:29:12.887Z",
+      "client": "UNKNOWN",
+      "confidence": "low"
+    },
+    "8d378ba2-a660-425d-aded-b585eb5f9834": {
+      "processed_at": "2026-05-14T19:58:46.210Z",
+      "client": "UNKNOWN",
+      "confidence": "low"
+    },
+    "5ea1a69c-90d6-41bd-8228-a1287df34649": {
+      "processed_at": "2026-05-14T20:58:33.879Z",
+      "client": "Jane Joyce",
+      "confidence": "high"
+    },
+    "bfcfbf8f-d3a0-4157-bd71-7bc4c298126c": {
+      "processed_at": "2026-05-14T23:28:27.288Z",
+      "client": "UNKNOWN",
+      "confidence": "low"
+    },
+    "b328660a-3259-4aa3-a692-4817c94e8b99": {
+      "processed_at": "2026-05-15T22:57:26.188Z",
+      "client": "Diane Costello",
+      "confidence": "low"
+    },
+    "db277bf1-5d88-441e-bfa0-b4a1148891d4": {
+      "processed_at": "2026-05-15T23:16:25.808Z",
+      "client": "UNKNOWN",
+      "confidence": "low"
+    },
+    "6ce4282d-8f87-4f0d-a3f9-4d3d93c2ee4d": {
+      "processed_at": "2026-05-15T23:17:07.710Z",
+      "client": "Joe Galan",
+      "confidence": "medium"
+    },
+    "ab1ac27b-83bf-4073-a3be-66e464240499": {
+      "processed_at": "2026-05-15T23:17:52.021Z",
+      "client": "Jesse and Eva Gallan",
+      "confidence": "medium"
+    },
+    "250b6863-b971-4fef-9ba9-c0cbeac02f48": {
+      "processed_at": "2026-05-15T23:17:53.049Z",
+      "client": "UNKNOWN",
+      "confidence": "low"
+    },
+    "e983bac2-3cb0-4b94-9c93-657fc3bcaebb": {
+      "processed_at": "2026-05-15T23:18:43.959Z",
+      "client": "Brian Harris",
+      "confidence": "medium"
+    },
+    "2dc00035-da28-4fe1-8f6b-6fe9e11190ee": {
+      "processed_at": "2026-05-15T23:18:57.195Z",
+      "client": "Brian Harris",
+      "confidence": "medium"
+    },
+    "5938bea6-275b-4989-9b34-1db4e524695b": {
+      "processed_at": "2026-05-15T23:19:37.712Z",
+      "client": "Brian Harris",
+      "confidence": "medium"
+    }
+  }
+}

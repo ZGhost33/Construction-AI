@@ -1,0 +1,14 @@
+{
+  "name": "construction-bi-pipeline",
+  "version": "1.0.0",
+  "description": "Construction Business Intelligence Pipeline — Pocket AI → Claude → Notion",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.52.0",
+    "axios": "^1.7.0"
+  }
+}
