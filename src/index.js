@@ -6,7 +6,10 @@ const { log } = require('./logger');
 async function runOnce(config) {
   log('=== Pipeline run starting ===');
   for (const business of config.businesses) {
-    if (!business.pocket_api_key || business.pocket_api_key.startsWith('pk_REPLACE')) {
+    // Support both single pocket_api_key and multi-device pocket_devices array
+    const hasDevices = business.pocket_devices && business.pocket_devices.some(d => d.api_key && !d.api_key.startsWith('pk_REPLACE'));
+    const hasKey = business.pocket_api_key && !business.pocket_api_key.startsWith('pk_REPLACE');
+    if (!hasDevices && !hasKey) {
       log(`[${business.name}] Skipping — pocket_api_key not configured`);
       continue;
     }

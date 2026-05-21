@@ -1,0 +1,59 @@
+{
+  "anthropic_api_key": "sk-ant-api03-YOUR_KEY_HERE",
+  "poll_interval_minutes": 15,
+  "location_server_port": 3456,
+  "location_timeout_hours": 12,
+  "businesses": [
+    {
+      "name": "Your Business Name",
+      "pocket_api_key": "pk_YOUR_PRIMARY_POCKET_KEY",
+      "pocket_devices": [
+        { "api_key": "pk_DEVICE_1_KEY", "person": "Person 1" },
+        { "api_key": "pk_DEVICE_2_KEY", "person": "Person 2" }
+      ],
+      "notion_token": "ntn_YOUR_NOTION_INTEGRATION_TOKEN",
+      "jobber": {
+        "client_id": "YOUR_JOBBER_CLIENT_ID",
+        "client_secret": "YOUR_JOBBER_CLIENT_SECRET",
+        "redirect_uri": "http://localhost:8080/callback"
+      },
+      "notion_databases": {
+        "clients": "NOTION_DATABASE_ID",
+        "conversation_log": "NOTION_DATABASE_ID",
+        "client_details": "NOTION_DATABASE_ID",
+        "commitments": "NOTION_DATABASE_ID",
+        "open_questions": "NOTION_DATABASE_ID"
+      },
+      "clients": [
+        {
+          "name": "Client Full Name",
+          "address": "123 Street, City ST"
+        },
+        {
+          "name": "Client With Keywords",
+          "address": "456 Street, City ST",
+          "keywords": ["Nickname", "LastName"]
+        }
+      ],
+      "people": [
+        { "name": "Luis", "role": "general contractor, always present" },
+        { "name": "Jorge", "role": "general manager" },
+        { "name": "Danilo", "role": "field supervisor" }
+      ]
+    },
+    {
+      "name": "Second Business",
+      "pocket_api_key": "pk_REPLACE_ME",
+      "notion_token": "secret_REPLACE_ME",
+      "notion_databases": {
+        "clients": "REPLACE_ME",
+        "conversation_log": "REPLACE_ME",
+        "client_details": "REPLACE_ME",
+        "commitments": "REPLACE_ME",
+        "open_questions": "REPLACE_ME"
+      },
+      "clients": [],
+      "people": []
+    }
+  ]
+}
