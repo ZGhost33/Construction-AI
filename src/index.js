@@ -18,7 +18,7 @@ async function runOnce(config) {
       log(`[${business.name}] Skipping — notion_token not configured`);
       continue;
     }
-    await syncJobberClients(business);
+    await syncJobberClients(business, config);
     await processBusiness(config.anthropic_api_key, business, config.location_timeout_hours || 12);
   }
   log('=== Pipeline run complete ===');

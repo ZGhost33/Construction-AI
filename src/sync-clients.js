@@ -18,6 +18,14 @@ const { addClientToConfig } = require('./config');
 const notion = require('./notion');
 const { log } = require('./logger');
 
+let driveModule = null;
+function getDrive() {
+  if (!driveModule) {
+    try { driveModule = require('./drive'); } catch (_) {}
+  }
+  return driveModule;
+}
+
 // Normalise a name for comparison — lowercase, collapse spaces, & / + → "and"
 function normaliseName(name) {
   return (name || '')
@@ -34,8 +42,9 @@ function formatAddress(addr) {
   return parts.join(', ');
 }
 
-async function syncJobberClients(business) {
+async function syncJobberClients(business, config = {}) {
   const { name: bizName, jobber, notion_token, notion_databases, clients: configClients } = business;
+  const rootFolderId = config.google_drive_root_folder_id;
 
   if (!jobber?.client_id) return; // Jobber not configured for this business
   if (!notion_token || notion_token.startsWith('secret_REPLACE')) return;
@@ -85,6 +94,19 @@ async function syncJobberClients(business) {
       added++;
     } catch (err) {
       log(`[${bizName}] ERROR adding "${jc.name}" to config: ${err.message}`);
+    }
+
+    // Auto-create Drive folder for the new client
+    if (rootFolderId && rootFolderId !== 'PASTE_FOLDER_ID_HERE') {
+      const d = getDrive();
+      if (d) {
+        try {
+          const result = await d.ensureClientFolder(rootFolderId, jc.name);
+          if (result.created) log(`[${bizName}] ✓ Drive folder created for "${jc.name}"`);
+        } catch (err) {
+          log(`[${bizName}] Drive folder skipped for "${jc.name}": ${err.message}`);
+        }
+      }
     }
   }
 

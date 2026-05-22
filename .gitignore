@@ -1,6 +1,7 @@
 # Secrets and credentials — never commit these
 config.json
 jobber-tokens.json
+drive-service-account.json
 
 # Runtime state — machine-specific
 processed_recordings.json

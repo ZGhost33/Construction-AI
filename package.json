@@ -9,6 +9,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.52.0",
-    "axios": "^1.7.0"
+    "axios": "^1.7.0",
+    "googleapis": "^172.0.0"
   }
 }
