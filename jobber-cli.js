@@ -231,8 +231,55 @@ async function cmdCreateClient(fullName, address) {
   }
 
   const client = data?.clientCreate?.client;
-  console.log(`✓ Client created: ${client.name} (ID: ${client.id})`);
+  console.log(`✓ Jobber: client created — ${client.name} (ID: ${client.id})`);
   if (addressInput) console.log(`  Address: ${address}`);
+
+  // ── Also create in Notion + config.json immediately ──────────────────────────
+  const biz = config.businesses[0]; // Cruz Services
+  const notionToken = biz.notion_token;
+  const clientsDbId = biz.notion_databases?.clients;
+
+  if (notionToken && clientsDbId && !notionToken.startsWith('secret_REPLACE')) {
+    try {
+      // Check if already in Notion
+      const findRes = await axios.post(
+        'https://api.notion.com/v1/databases/' + clientsDbId + '/query',
+        { filter: { property: 'Name', title: { equals: client.name } }, page_size: 1 },
+        { headers: { Authorization: `Bearer ${notionToken}`, 'Notion-Version': '2022-06-28', 'Content-Type': 'application/json' }, timeout: 10000 }
+      );
+      if (findRes.data.results?.length > 0) {
+        console.log(`  Notion: already exists — skipped`);
+      } else {
+        const toRt = t => [{ type: 'text', text: { content: t || '' } }];
+        const props = { Name: { title: toRt(client.name) }, Status: { status: { name: 'Active' } } };
+        if (address) props.Address = { rich_text: toRt(address) };
+        await axios.post(
+          'https://api.notion.com/v1/pages',
+          { parent: { database_id: clientsDbId }, properties: props },
+          { headers: { Authorization: `Bearer ${notionToken}`, 'Notion-Version': '2022-06-28', 'Content-Type': 'application/json' }, timeout: 10000 }
+        );
+        console.log(`  Notion: ✓ created`);
+      }
+    } catch (err) {
+      console.log(`  Notion: ✗ ${err.message}`);
+    }
+
+    // Add to config.json
+    try {
+      const configPath = path.join(__dirname, 'config.json');
+      const cfg = JSON.parse(fs.readFileSync(configPath, 'utf8'));
+      const b = cfg.businesses.find(b => b.name === biz.name);
+      if (b && !b.clients.some(c => c.name.toLowerCase() === client.name.toLowerCase())) {
+        b.clients.push({ name: client.name, address: address || '' });
+        fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2), 'utf8');
+        console.log(`  config.json: ✓ added`);
+      } else {
+        console.log(`  config.json: already exists — skipped`);
+      }
+    } catch (err) {
+      console.log(`  config.json: ✗ ${err.message}`);
+    }
+  }
 }
 
 async function cmdRun() {

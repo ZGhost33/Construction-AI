@@ -1,5 +1,6 @@
 const { loadConfig } = require('./config');
 const { processBusiness } = require('./pipeline');
+const { syncJobberClients } = require('./sync-clients');
 const { startLocationServer } = require('./location-server');
 const { log } = require('./logger');
 
@@ -17,6 +18,7 @@ async function runOnce(config) {
       log(`[${business.name}] Skipping — notion_token not configured`);
       continue;
     }
+    await syncJobberClients(business);
     await processBusiness(config.anthropic_api_key, business, config.location_timeout_hours || 12);
   }
   log('=== Pipeline run complete ===');

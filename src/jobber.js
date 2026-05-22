@@ -204,4 +204,82 @@ async function writeToJobber(jobberConfig, clientName, analysis, recordingDate) 
   }
 }
 
-module.exports = { writeToJobber };
+// ── Fetch all clients from Jobber (paginated) ─────────────────────────────────
+
+async function fetchAllClients(jobberConfig) {
+  const accessToken = await getAccessToken(jobberConfig);
+  const query = `
+    query FetchClients($cursor: String) {
+      clients(first: 50, after: $cursor) {
+        nodes {
+          id
+          name
+          billingAddress {
+            street
+            city
+            province
+            postalCode
+          }
+          phones { number }
+          emails { address }
+        }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  `;
+
+  const clients = [];
+  let cursor = null;
+  do {
+    const data = await graphql(accessToken, query, cursor ? { cursor } : {});
+    const page = data?.clients;
+    (page?.nodes || []).forEach(c => clients.push(c));
+    cursor = page?.pageInfo?.hasNextPage ? page.pageInfo.endCursor : null;
+  } while (cursor);
+
+  return clients;
+}
+
+// ── Create a client in Jobber ─────────────────────────────────────────────────
+
+async function createJobberClient(jobberConfig, { name, address, phone, email }) {
+  const accessToken = await getAccessToken(jobberConfig);
+
+  // Parse "FirstName LastName" — last word is last name
+  const parts = (name || '').trim().split(/\s+/);
+  const firstName = parts.slice(0, -1).join(' ') || parts[0];
+  const lastName = parts.length > 1 ? parts[parts.length - 1] : '';
+
+  // Parse "123 Street, City ST 12345"
+  const addrMatch = (address || '').match(/^(.*?),\s*([^,]+?)\s+([A-Z]{2})?\s*(\d{5})?$/);
+  const street1 = addrMatch?.[1]?.trim() || address || '';
+  const city = addrMatch?.[2]?.trim() || '';
+  const province = addrMatch?.[3]?.trim() || 'FL';
+  const postalCode = addrMatch?.[4]?.trim() || '';
+
+  const mutation = `
+    mutation CreateClient($input: ClientCreateInput!) {
+      clientCreate(input: $input) {
+        client { id name }
+        userErrors { message path }
+      }
+    }
+  `;
+
+  const input = {
+    firstName,
+    lastName,
+    ...(street1 && {
+      billingAddress: { street1, city, province, postalCode, country: 'US' },
+    }),
+    ...(phone && { phones: [{ number: phone, primary: true }] }),
+    ...(email && { emails: [{ address: email, primary: true }] }),
+  };
+
+  const data = await graphql(accessToken, mutation, { input });
+  const errors = data?.clientCreate?.userErrors;
+  if (errors?.length > 0) throw new Error('Jobber create error: ' + errors.map(e => e.message).join(', '));
+  return data?.clientCreate?.client;
+}
+
+module.exports = { writeToJobber, fetchAllClients, createJobberClient };
