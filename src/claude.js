@@ -60,6 +60,8 @@ Required JSON structure:
 
 Rules:
 - client matching: use the CLIENT KEYWORD SHORTCUTS above aggressively. A single last name mention (e.g. "Harris", "Joyce", "Callery") is enough to identify the client with high confidence. A street name alone (e.g. "Oakmont", "Brandywine", "Burning Tree") is also enough. If multiple keywords appear, pick the strongest match.
+- CRITICAL: if you can identify which client this conversation is about from ANY context clue — the work being described, the location, the people present, a partial name, anything — put that client in the "client" field. Do NOT return UNKNOWN if you have enough context to make a reasonable guess. A medium or low confidence match is always better than UNKNOWN.
+- CONSISTENCY RULE: if your summary mentions a client's name, you MUST use that same client in the "client" field. It is never acceptable to write a client's name in the summary but return UNKNOWN in the client field.
 - if the confirmed client is provided at the top, always use that — never override it.
 - client_details: only concrete facts, decisions, or specifications (materials, dimensions, colors, finishes, layout changes). Skip vague statements.
 - commitments: only explicit promises with a clear responsible party and deliverable.

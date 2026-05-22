@@ -79,8 +79,22 @@ async function processBusiness(anthropicApiKey, business, locationTimeoutHours =
         }
       }
 
-      const resolvedClient = confirmedClient || clientName;
-      const resolvedConfidence = confirmedClient ? 'high' : confidence;
+      // Fallback: if Claude returned UNKNOWN but the summary or log_entry mentions a client name,
+      // scan against known client keywords and auto-resolve with low confidence
+      let finalClientName = clientName;
+      let finalConfidence = confidence;
+      if (!confirmedClient && clientName === 'UNKNOWN') {
+        const scanText = `${summary || ''} ${log_entry || ''}`.toLowerCase();
+        const fallback = resolveFallbackClient(scanText, business.clients);
+        if (fallback) {
+          log(`[${deviceLabel}] UNKNOWN resolved via summary scan → "${fallback}" (low confidence)`);
+          finalClientName = fallback;
+          finalConfidence = 'low';
+        }
+      }
+
+      const resolvedClient = confirmedClient || finalClientName;
+      const resolvedConfidence = confirmedClient ? 'high' : finalConfidence;
 
       log(`[${deviceLabel}] Client: "${resolvedClient}" (${resolvedClient === confirmedClient ? 'GPS-confirmed' : confidence + ' confidence'}) | cache_read=${_cache_stats?.cache_read || 0} tokens`);
 
@@ -161,6 +175,27 @@ async function processBusiness(anthropicApiKey, business, locationTimeoutHours =
       }
     }
   }
+}
+
+// Scan free-form text (summary + log_entry) for client name/keyword matches.
+// Returns the best-matching client name, or null if nothing found.
+function resolveFallbackClient(text, clients = []) {
+  if (!text || !clients.length) return null;
+
+  for (const c of clients) {
+    // Build the same keyword set as the Claude prompt
+    const lastName = c.name.split(' ').slice(-1)[0];
+    const street = (c.address || '').match(/\d+\s+\S+\s+(\S+)/)?.[1] || '';
+    const custom = Array.isArray(c.keywords) ? c.keywords : [];
+    const keywords = [...new Set([...custom, c.name, lastName, street].filter(Boolean))];
+
+    for (const kw of keywords) {
+      if (kw.length >= 3 && text.includes(kw.toLowerCase())) {
+        return c.name;
+      }
+    }
+  }
+  return null;
 }
 
 function inferCategory(detail) {
