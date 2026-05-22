@@ -113,6 +113,21 @@ async function syncJobberClients(business, config = {}) {
   if (added > 0) {
     log(`[${bizName}] Client sync complete — ${added} new client(s) added`);
   }
+
+  // Ensure Drive folders exist for ALL configured clients (catches existing ones too)
+  if (rootFolderId && rootFolderId !== 'PASTE_FOLDER_ID_HERE') {
+    const d = getDrive();
+    if (d) {
+      for (const c of (configClients || [])) {
+        try {
+          const result = await d.ensureClientFolder(rootFolderId, c.name);
+          if (result.created) log(`[${bizName}] ✓ Drive folder created for "${c.name}"`);
+        } catch (err) {
+          log(`[${bizName}] Drive folder error for "${c.name}": ${err.message}`);
+        }
+      }
+    }
+  }
 }
 
 module.exports = { syncJobberClients };
