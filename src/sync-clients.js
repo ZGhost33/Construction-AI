@@ -18,9 +18,13 @@ const { addClientToConfig } = require('./config');
 const notion = require('./notion');
 const { log } = require('./logger');
 
-// Normalise a name for comparison — lowercase, collapse spaces
+// Normalise a name for comparison — lowercase, collapse spaces, & / + → "and"
 function normaliseName(name) {
-  return (name || '').toLowerCase().replace(/\s+/g, ' ').trim();
+  return (name || '')
+    .toLowerCase()
+    .replace(/[&+]/g, 'and')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 // Format a Jobber billing address into a single string

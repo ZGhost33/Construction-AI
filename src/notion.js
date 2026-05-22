@@ -21,39 +21,55 @@ function notionHeaders(token) {
   };
 }
 
-// Query a database for a page whose title property matches `name` (case-insensitive)
+// Normalise a client name for fuzzy comparison:
+// lowercase, collapse spaces, replace & / + with "and"
+function normaliseName(name) {
+  return (name || '')
+    .toLowerCase()
+    .replace(/[&+]/g, 'and')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// Query a database for a page whose title property matches `name`.
+// Tries exact match first, then falls back to full scan with fuzzy normalisation.
 async function findClientPage(token, databaseId, clientName) {
   if (!clientName || clientName === 'UNKNOWN') return null;
+
+  // Step 1: exact match via Notion filter (fast)
   try {
     const res = await axios.post(
       `${NOTION_BASE}/databases/${databaseId}/query`,
-      {
-        filter: {
-          property: 'Name',
-          title: { equals: clientName },
-        },
-        page_size: 1,
-      },
+      { filter: { property: 'Name', title: { equals: clientName } }, page_size: 1 },
       { headers: notionHeaders(token), timeout: 15000 }
     );
-    return res.data.results?.[0]?.id || null;
-  } catch (err) {
-    // Fallback: fetch all and match locally (case-insensitive)
-    try {
+    if (res.data.results?.[0]?.id) return res.data.results[0].id;
+  } catch (_) {}
+
+  // Step 2: full scan with normalised comparison (handles & vs and, case, spacing)
+  try {
+    const pages = [];
+    let cursor;
+    do {
+      const body = { page_size: 100 };
+      if (cursor) body.start_cursor = cursor;
       const all = await axios.post(
         `${NOTION_BASE}/databases/${databaseId}/query`,
-        { page_size: 100 },
+        body,
         { headers: notionHeaders(token), timeout: 15000 }
       );
-      const lower = clientName.toLowerCase();
-      const match = all.data.results?.find(p => {
-        const title = p.properties?.Name?.title?.[0]?.text?.content || '';
-        return title.toLowerCase() === lower;
-      });
-      return match?.id || null;
-    } catch {
-      return null;
-    }
+      pages.push(...(all.data.results || []));
+      cursor = all.data.has_more ? all.data.next_cursor : null;
+    } while (cursor);
+
+    const needle = normaliseName(clientName);
+    const match = pages.find(p => {
+      const title = p.properties?.Name?.title?.[0]?.text?.content || '';
+      return normaliseName(title) === needle;
+    });
+    return match?.id || null;
+  } catch {
+    return null;
   }
 }
 
