@@ -13,8 +13,17 @@
  * automatically appear in Notion and be recognised by Claude within 15 minutes.
  */
 
-const { fetchAllClients } = require('./jobber');
+const { fetchAllClients, fetchClientScopes } = require('./jobber');
 const { addClientToConfig } = require('./config');
+
+const SCOPES_PATH = require('path').join(__dirname, '..', 'client-scopes.json');
+
+function loadScopes() {
+  try { return JSON.parse(require('fs').readFileSync(SCOPES_PATH, 'utf8')); } catch { return {}; }
+}
+function saveScopes(scopes) {
+  require('fs').writeFileSync(SCOPES_PATH, JSON.stringify(scopes, null, 2), 'utf8');
+}
 const notion = require('./notion');
 const { log } = require('./logger');
 
@@ -112,6 +121,23 @@ async function syncJobberClients(business, config = {}) {
 
   if (added > 0) {
     log(`[${bizName}] Client sync complete — ${added} new client(s) added`);
+  }
+
+  // Sync client scopes from Jobber quotes — only once every 6 hours (scopes rarely change)
+  const allScopes = loadScopes();
+  const lastSync = allScopes[`__last_sync_${bizName}`] || 0;
+  const SIX_HOURS = 6 * 60 * 60 * 1000;
+  if (Date.now() - lastSync > SIX_HOURS) {
+    await new Promise(r => setTimeout(r, 3000)); // brief pause after client sync
+    try {
+      const freshScopes = await fetchClientScopes(jobber);
+      allScopes[bizName] = freshScopes;
+      allScopes[`__last_sync_${bizName}`] = Date.now();
+      saveScopes(allScopes);
+      log(`[${bizName}] ✓ Client scopes updated (${Object.keys(freshScopes).length} clients with quotes)`);
+    } catch (err) {
+      log(`[${bizName}] Scope sync skipped — ${err.message}`);
+    }
   }
 
   // Ensure Drive folders exist for ALL configured clients (catches existing ones too)

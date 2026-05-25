@@ -1,4 +1,6 @@
 const Anthropic = require('@anthropic-ai/sdk');
+const fs = require('fs');
+const path = require('path');
 
 // Model to use — update as newer versions are released
 const MODEL = 'claude-sonnet-4-6';
@@ -10,10 +12,25 @@ function getClient(apiKey) {
   return _client;
 }
 
+// Load scopes from client-scopes.json — keyed by businessName → clientName → scope text
+function loadScopes(businessName) {
+  try {
+    const raw = fs.readFileSync(path.join(__dirname, '..', 'client-scopes.json'), 'utf8');
+    return JSON.parse(raw)[businessName] || {};
+  } catch { return {}; }
+}
+
 // Build the static system prompt for a business — this content is cached
 function buildSystemContent(business) {
+  const scopes = loadScopes(business.name);
+
   const clientList = business.clients
-    .map(c => `- ${c.name} — ${c.address}`)
+    .map(c => {
+      const scope = scopes[c.name];
+      return scope
+        ? `- ${c.name} — ${c.address}\n  Scope: ${scope}`
+        : `- ${c.name} — ${c.address}`;
+    })
     .join('\n');
 
   const peopleList = business.people
@@ -60,6 +77,7 @@ Required JSON structure:
 
 Rules:
 - client matching: use the CLIENT KEYWORD SHORTCUTS above aggressively. A single last name mention (e.g. "Harris", "Joyce", "Callery") is enough to identify the client with high confidence. A street name alone (e.g. "Oakmont", "Brandywine", "Burning Tree") is also enough. If multiple keywords appear, pick the strongest match.
+- scope matching: each client has a Scope line listing their project work (rooms, materials, fixtures, trade work). If no name or street is mentioned but the conversation describes work that matches a client's scope (e.g. "the shower conversion" → Deb Vivian, "the impact windows" → Tara Squier, "the kitchen cabinets" → a client with a cabinet scope), use the scope to identify the client. Scope match alone is sufficient for medium confidence.
 - CRITICAL: if you can identify which client this conversation is about from ANY context clue — the work being described, the location, the people present, a partial name, anything — put that client in the "client" field. Do NOT return UNKNOWN if you have enough context to make a reasonable guess. A medium or low confidence match is always better than UNKNOWN.
 - CONSISTENCY RULE: if your summary mentions a client's name, you MUST use that same client in the "client" field. It is never acceptable to write a client's name in the summary but return UNKNOWN in the client field.
 - if the confirmed client is provided at the top, always use that — never override it.

@@ -282,4 +282,72 @@ async function createJobberClient(jobberConfig, { name, address, phone, email })
   return data?.clientCreate?.client;
 }
 
-module.exports = { writeToJobber, fetchAllClients, createJobberClient };
+// ── Fetch all quotes (paginated) and build per-client scope summaries ──────────
+
+async function fetchClientScopes(jobberConfig) {
+  const accessToken = await getAccessToken(jobberConfig);
+
+  // Fetch only line item names (not descriptions) to keep query cost low
+  const query = `
+    query FetchQuotes($cursor: String) {
+      quotes(first: 20, after: $cursor) {
+        nodes {
+          title
+          quoteStatus
+          client { name }
+          lineItems {
+            nodes { name }
+          }
+        }
+        pageInfo { hasNextPage endCursor }
+      }
+    }
+  `;
+
+  // Statuses worth including — anything the client has seen or is active
+  const ACTIVE_STATUSES = new Set(['approved', 'converted', 'changes_requested', 'awaiting_response']);
+
+  const byClient = {}; // clientName → [{ quoteTitle, lineItems }]
+  let cursor = null;
+
+  do {
+    const data = await graphql(accessToken, query, cursor ? { cursor } : {});
+    const page = data?.quotes;
+    for (const q of (page?.nodes || [])) {
+      if (!ACTIVE_STATUSES.has(q.quoteStatus)) continue;
+      const name = q.client?.name;
+      if (!name) continue;
+      if (!byClient[name]) byClient[name] = [];
+      byClient[name].push({
+        quoteTitle: q.title || '',
+        lineItems: (q.lineItems?.nodes || []).map(li => ({
+          name: li.name || '',
+          desc: li.description || '',
+        })),
+      });
+    }
+    cursor = page?.pageInfo?.hasNextPage ? page.pageInfo.endCursor : null;
+  } while (cursor);
+
+  // Build compact scope text per client — line item names + first sentence of description
+  const scopes = {};
+  for (const [clientName, quotes] of Object.entries(byClient)) {
+    const parts = [];
+    for (const q of quotes) {
+      const items = q.lineItems
+        .filter(li => li.name && !li.name.toLowerCase().startsWith('scope note'))
+        .map(li => li.name.trim());
+      if (items.length > 0) {
+        parts.push(q.quoteTitle ? `${q.quoteTitle}: ${items.join(', ')}` : items.join(', '));
+      }
+    }
+    if (parts.length > 0) {
+      // Cap at 600 chars to keep the Claude prompt manageable
+      scopes[clientName] = parts.join(' | ').slice(0, 600);
+    }
+  }
+
+  return scopes; // { "Deb Vivian": "Vivian Renovation: Guest Bath 1...", ... }
+}
+
+module.exports = { writeToJobber, fetchAllClients, createJobberClient, fetchClientScopes };

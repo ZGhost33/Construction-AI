@@ -6,6 +6,7 @@ drive-service-account.json
 # Runtime state — machine-specific
 processed_recordings.json
 location-cache.json
+client-scopes.json
 
 # Dependencies
 node_modules/
