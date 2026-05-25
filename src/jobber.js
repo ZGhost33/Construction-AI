@@ -287,7 +287,6 @@ async function createJobberClient(jobberConfig, { name, address, phone, email })
 async function fetchClientScopes(jobberConfig) {
   const accessToken = await getAccessToken(jobberConfig);
 
-  // Fetch only line item names (not descriptions) to keep query cost low
   const query = `
     query FetchQuotes($cursor: String) {
       quotes(first: 20, after: $cursor) {
@@ -296,7 +295,7 @@ async function fetchClientScopes(jobberConfig) {
           quoteStatus
           client { name }
           lineItems {
-            nodes { name }
+            nodes { name description }
           }
         }
         pageInfo { hasNextPage endCursor }
@@ -336,14 +335,28 @@ async function fetchClientScopes(jobberConfig) {
     for (const q of quotes) {
       const items = q.lineItems
         .filter(li => li.name && !li.name.toLowerCase().startsWith('scope note'))
-        .map(li => li.name.trim());
+        .map(li => {
+          let text = li.name.trim();
+          if (li.desc) {
+            // Extract key phrases: first 2 sentences, capped at 120 chars
+            const sentences = li.desc
+              .split(/[.\n]/)
+              .map(s => s.trim())
+              .filter(s => s.length > 5 && !s.toLowerCase().startsWith('scope note'));
+            const detail = sentences.slice(0, 2).join('. ');
+            if (detail.length > 0) {
+              text += ` (${detail.slice(0, 120)})`;
+            }
+          }
+          return text;
+        });
       if (items.length > 0) {
         parts.push(q.quoteTitle ? `${q.quoteTitle}: ${items.join(', ')}` : items.join(', '));
       }
     }
     if (parts.length > 0) {
-      // Cap at 600 chars to keep the Claude prompt manageable
-      scopes[clientName] = parts.join(' | ').slice(0, 600);
+      // Cap at 1200 chars per client — rich enough for matching, not bloating the prompt
+      scopes[clientName] = parts.join(' | ').slice(0, 1200);
     }
   }
 
