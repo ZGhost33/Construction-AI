@@ -163,4 +163,102 @@ ${transcriptText}`;
   return analysis;
 }
 
-module.exports = { analyzeTranscript };
+// ── New pipeline: analyzeConversation ────────────────────────────────────────
+// Analyzes a PRE-SEGMENTED conversation chunk.
+// Key difference: does NOT have "UNKNOWN is worse than a guess".
+// See full JSDoc in the function body.
+
+async function analyzeConversation(apiKey, business, transcript, recordingDate, devicePerson, confirmedClient, knownJobs) {
+  const client = getClient(apiKey);
+  const scopes = loadScopes(business.name);
+
+  const clientList = business.clients
+    .map(c => {
+      const scope = scopes[c.name];
+      return scope ? `- ${c.name} — ${c.address}\n  Scope: ${scope}` : `- ${c.name} — ${c.address}`;
+    })
+    .join('\n');
+
+  const peopleList = business.people
+    .map(p => `- ${p.name} = ${p.role}`)
+    .join('\n');
+
+  const keywordMap = business.clients.map(c => {
+    const lastName = c.name.split(' ').slice(-1)[0];
+    const street = (c.address || '').match(/\d+\s+\S+\s+(\S+)/)?.[1] || '';
+    const custom = Array.isArray(c.keywords) ? c.keywords : [];
+    const all = [...new Set([...custom, lastName, street].filter(Boolean))];
+    return `- "${all.join(', ')}" → ${c.name}`;
+  }).join('\n');
+
+  const jobSection = (confirmedClient && knownJobs && knownJobs.length > 0)
+    ? `\nCONFIRMED CLIENT: ${confirmedClient}\nRoute to the specific job whose scope best matches this conversation:\n${knownJobs.map(j => `- Job #${j.jobNumber}: ${j.title}`).join('\n')}\nIf content spans two separate job scopes, set job_id to null and list both numbers in job_ids_multi.\nIf uncertain which job, set job_id to null.`
+    : '';
+
+  const systemContent = `You are analyzing construction project conversations for ${business.name}.
+
+ACTIVE CLIENTS:
+${clientList || '(none configured)'}
+
+CLIENT KEYWORD SHORTCUTS — if any of these words or names appear, map to that client:
+${keywordMap || '(none configured)'}
+
+KNOWN PEOPLE AND ROLES:
+${peopleList || '(none configured)'}
+
+DEVICE WORN BY: ${devicePerson || 'unknown'} — SPEAKER_00 is most likely ${devicePerson || 'the device owner'}.
+${jobSection}
+
+INSTRUCTIONS:
+Analyze this pre-segmented conversation (it is ONE conversation already).
+Return ONLY valid JSON — no markdown fences, no explanation.
+
+{
+  "client": "<exact client name from list, or UNKNOWN>",
+  "confidence": "<high|medium|low>",
+  "bucket": "<job_relevant|new_prospect|no_business_content|uncertain>",
+  "source_tag": "<Client meeting|Field update|Internal|Supplier call>",
+  "participants": ["name1"],
+  "job_id": "<Job #N title or null>",
+  "job_ids_multi": [],
+  "summary": "<2-3 sentence summary>",
+  "commitments": [{"who": "name", "what": "promised", "by_when": "ISO date or null"}],
+  "open_questions": ["unresolved question"],
+  "note_text": "<formatted note ready for Jobber — [source_tag] date, summary, commitments, open questions>",
+  "new_client": null
+}
+
+CRITICAL RULES:
+- Return UNKNOWN if you do not have enough context to identify the client. Do NOT guess to avoid UNKNOWN.
+- Single keyword match (one last name, one street) = medium confidence at most.
+- Two or more independent signals (name + scope, or name + address) = high confidence.
+- no_business_content: personal talk, dead air, zero job context.
+- Internal team conversations (Luis/Jorge/Danilo giving status, deciding next steps) are job_relevant — never no_business_content.
+- source_tag: "Client meeting" if a non-team participant is present; "Field update" if device owner is at a job site reporting in; "Internal" if all team members; "Supplier call" if a supplier is talking.
+- note_text format: "[source_tag] YYYY-MM-DD\\n\\n<summary paragraph>\\n\\nCommitments:\\n• who → what\\n\\nOpen questions:\\n• question". Omit empty sections.
+- new_client: only if someone explicitly declares a new client (name + project intent). Otherwise null.`;
+
+  const confirmedLine = confirmedClient
+    ? `CONFIRMED CLIENT (voice identification — do not override): ${confirmedClient}\n\n`
+    : '';
+
+  const response = await client.messages.create({
+    model: MODEL,
+    max_tokens: 2048,
+    system: [{ type: 'text', text: systemContent, cache_control: { type: 'ephemeral' } }],
+    messages: [{ role: 'user', content: `${confirmedLine}Recording date: ${recordingDate || 'unknown'}\n\nTRANSCRIPT:\n${transcript}` }],
+  });
+
+  const raw = response.content[0]?.text || '';
+  const analysis = parseAnalysis(raw);
+  const usage = response.usage || {};
+  analysis._cache_stats = {
+    input_tokens: usage.input_tokens,
+    output_tokens: usage.output_tokens,
+    cache_read: usage.cache_read_input_tokens,
+    cache_created: usage.cache_creation_input_tokens,
+  };
+  return analysis;
+}
+
+module.exports = { analyzeTranscript, analyzeConversation };

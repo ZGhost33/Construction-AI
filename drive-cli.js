@@ -58,12 +58,54 @@ async function cmdSearch(clientName, keyword) {
   }
 
   const files = await drive.listFiles(ROOT_FOLDER_ID, clientName, keyword || null);
-  if (!files.length) {
-    console.log(`No files found for "${clientName}"${keyword ? ` matching "${keyword}"` : ''}`);
-  } else {
+  if (files.length) {
     console.log(`Files for ${clientName}${keyword ? ` (filtered: "${keyword}")` : ''} — ${files.length} found:\n`);
     console.log(formatFileList(files));
+    return;
   }
+
+  // No files came back. Be honest about WHY — don't let a name mismatch read as
+  // "empty." Distinguish: folder missing vs. folder exists-but-empty vs. a
+  // keyword that simply matched nothing. The CLI is the source of truth here so
+  // the agent relays a fact instead of guessing.
+  const folders = await drive.listClientFolders(ROOT_FOLDER_ID);
+  const norm = s => String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+  const want = norm(clientName);
+  const match = folders.find(f => norm(f.name) === want);
+
+  if (match && keyword) {
+    // Folder is real; the keyword filter is what came up empty. Show what's there.
+    const all = await drive.listFiles(ROOT_FOLDER_ID, match.name, null);
+    if (all.length) {
+      console.log(`No files matching "${keyword}" in ${match.name}'s folder, but it has ${all.length} other file(s):\n`);
+      console.log(formatFileList(all));
+    } else {
+      console.log(`${match.name}'s folder exists but is empty — nothing uploaded yet (so nothing matches "${keyword}").`);
+    }
+    return;
+  }
+
+  if (match) {
+    console.log(`${match.name}'s folder exists but is currently empty — no files have been uploaded yet. (This is a confirmed empty folder, not a lookup error.)`);
+    return;
+  }
+
+  // No folder by that name. Offer the closest real folders so a typo/variant
+  // never gets reported as "no files."
+  const sub = folders.filter(f => norm(f.name).includes(want) || want.includes(norm(f.name)));
+  const lev = (a, b) => {
+    const d = Array.from({ length: a.length + 1 }, (_, i) => [i, ...Array(b.length).fill(0)]);
+    for (let j = 0; j <= b.length; j++) d[0][j] = j;
+    for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++)
+      d[i][j] = Math.min(d[i-1][j]+1, d[i][j-1]+1, d[i-1][j-1] + (a[i-1] === b[j-1] ? 0 : 1));
+    return d[a.length][b.length];
+  };
+  const near = (sub.length ? sub.map(f => f.name)
+    : folders.map(f => ({ n: f.name, d: lev(want, norm(f.name)) }))
+        .sort((x, y) => x.d - y.d).filter(x => x.d <= 6).slice(0, 5).map(x => x.n));
+  console.log(`No Drive folder found for "${clientName}".` +
+    (near.length ? ` Closest folder${near.length > 1 ? 's' : ''}: ${near.join(', ')}. Try the exact name.`
+                 : ` No similar folder names either — check the client name.`));
 }
 
 async function cmdGet(fileId) {
@@ -138,6 +180,23 @@ async function cmdCreateFolder(clientName) {
   }
 }
 
+async function cmdMergeFolders(sourceName, targetName) {
+  if (!sourceName || !targetName) {
+    console.error('Usage: node drive-cli.js merge-folders "Duplicate Name" "Keep Name"');
+    process.exit(1);
+  }
+  console.log(`Merging "${sourceName}" into "${targetName}"...`);
+  const result = await drive.mergeFolders(ROOT_FOLDER_ID, sourceName, targetName);
+  if (result.moved === 0) {
+    console.log('Source folder was empty — deleted.');
+  } else {
+    console.log(`Moved ${result.moved} file(s):`);
+    result.files.forEach(f => console.log(`  ✓ ${f}`));
+    console.log('Source folder deleted.');
+  }
+  console.log(`Done. All files now in "${targetName}".`);
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 const [,, cmd, ...args] = process.argv;
 
@@ -150,6 +209,7 @@ const [,, cmd, ...args] = process.argv;
       case 'upload-telegram': await cmdUploadTelegram(args[0], args[1], args[2]); break;
       case 'folders':        await cmdFolders(); break;
       case 'create-folder':  await cmdCreateFolder(args[0]); break;
+      case 'merge-folders':  await cmdMergeFolders(args[0], args[1]); break;
       default:
         console.log(`Drive CLI — construction-bi-pipeline
 
@@ -160,7 +220,9 @@ Commands:
   upload-telegram <tg-file-id> "Client Name"      Save a Telegram file to client folder
   folders                                         List all client folders
   create-folder "Client Name"                     Create a folder for a new client
+  merge-folders "Duplicate Name" "Keep Name"      Merge duplicate folders into one
 `);
+
     }
   } catch (err) {
     console.error('Error:', err.message);

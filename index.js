@@ -1,9 +1,6 @@
 const { loadConfig } = require('./config');
 const { processBusiness } = require('./pipeline');
-const { syncJobberClients } = require('./sync-clients');
-const { processNewConvertedQuotes } = require('./quote-processor');
 const { startLocationServer } = require('./location-server');
-const { startDashboard } = require('./dashboard-server');
 const { log } = require('./logger');
 
 async function runOnce(config) {
@@ -20,8 +17,6 @@ async function runOnce(config) {
       log(`[${business.name}] Skipping — notion_token not configured`);
       continue;
     }
-    await syncJobberClients(business, config);
-    await processNewConvertedQuotes(config.anthropic_api_key, business, config);
     await processBusiness(config.anthropic_api_key, business, config.location_timeout_hours || 12);
   }
   log('=== Pipeline run complete ===');
@@ -44,11 +39,6 @@ async function main() {
 
   // Start the location webhook server
   startLocationServer(port);
-
-  // Start the CEO dashboard
-  const dashboardPort = config.dashboard_port || 4000;
-  startDashboard(dashboardPort);
-  log(`[Dashboard] CEO dashboard at http://5.161.227.111:${dashboardPort}`);
 
   // Run immediately on start
   await runOnce(config);

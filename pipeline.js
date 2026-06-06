@@ -2,10 +2,9 @@ const { fetchRecordings, fetchRecordingDetail, flattenTranscript } = require('./
 const { analyzeTranscript } = require('./claude');
 const { isProcessed, markProcessed } = require('./storage');
 const { getLocation } = require('./location-cache');
-const { addClientToConfig, loadConfig } = require('./config');
+const { addClientToConfig } = require('./config');
 const notion = require('./notion');
 const { writeToJobber } = require('./jobber');
-const { identifySpeakers, applyNamesToTranscript } = require('./voice-identifier');
 const { log } = require('./logger');
 
 async function processBusiness(anthropicApiKey, business, locationTimeoutHours = 12) {
@@ -37,15 +36,15 @@ async function processBusiness(anthropicApiKey, business, locationTimeoutHours =
     const recordingId = recording.id || recording.recording_id;
     if (!recordingId) continue;
 
-    const device = recording._device || { api_key: business.pocket_api_key, person: null };
-    const deviceLabel = device.person ? `${name}/${device.person}` : name;
-
     if (isProcessed(name, recordingId)) {
-      log(`[${deviceLabel}] Skipping already-processed recording ${recordingId}`);
+      log(`[${deviceLabel}]Skipping already-processed recording ${recordingId}`);
       continue;
     }
 
-    log(`[${deviceLabel}] Processing recording ${recordingId}...`);
+    log(`[${deviceLabel}]Processing recording ${recordingId}...`);
+
+    const device = recording._device || { api_key: business.pocket_api_key, person: null };
+    const deviceLabel = device.person ? `${name}/${device.person}` : name;
 
     try {
       const detail = await fetchRecordingDetail(device.api_key, recordingId);
@@ -57,38 +56,11 @@ async function processBusiness(anthropicApiKey, business, locationTimeoutHours =
         continue;
       }
 
+      const transcriptText = flattenTranscript(segments, business.people);
       const recordingDate = (detail.recording_at || detail.created_at || detail.date || new Date().toISOString()).slice(0, 10);
 
       // Check GPS location cache — did this device check in recently?
       const confirmedClient = getLocation(device.api_key, locationTimeoutHours);
-
-      // Speaker identification — try to map SPEAKER_XX to real names
-      let transcriptText;
-      try {
-        const fullConfig  = loadConfig();
-        const azureConfig = fullConfig.azure_speaker_key ? {
-          key:    fullConfig.azure_speaker_key,
-          region: fullConfig.azure_speaker_region || 'eastus',
-        } : null;
-        const speakerMap = await identifySpeakers(
-          segments,
-          recordingId,
-          device.person || null,        // device owner = SPEAKER_00
-          confirmedClient || null,       // known client = likely SPEAKER_01
-          azureConfig
-        );
-        const namedSpeakers = Object.values(speakerMap).filter(v => !v.startsWith('SPEAKER_'));
-        if (namedSpeakers.length > 0) {
-          log(`[${deviceLabel}] Speaker IDs: ${Object.entries(speakerMap).map(([k,v]) => `${k}→${v}`).join(', ')}`);
-          transcriptText = applyNamesToTranscript(segments, speakerMap);
-        } else {
-          transcriptText = flattenTranscript(segments, business.people);
-        }
-      } catch (err) {
-        log(`[${deviceLabel}] Speaker ID skipped: ${err.message}`);
-        transcriptText = flattenTranscript(segments, business.people);
-      }
-
       log(`[${deviceLabel}] Sending to Claude...`);
       const analysis = await analyzeTranscript(anthropicApiKey, business, transcriptText, recordingDate, confirmedClient);
 
@@ -98,44 +70,30 @@ async function processBusiness(anthropicApiKey, business, locationTimeoutHours =
       if (new_client?.name) {
         const exists = await notion.findClientPage(notion_token, notion_databases.clients, new_client.name);
         if (!exists) {
-          log(`[${deviceLabel}] New client detected: "${new_client.name}" — creating in Notion...`);
+          log(`[${deviceLabel}]New client detected: "${new_client.name}" — creating in Notion...`);
           await notion.createClient(notion_token, notion_databases.clients, new_client);
           addClientToConfig(name, new_client.name, new_client.address || '');
-          log(`[${deviceLabel}] ✓ New client "${new_client.name}" added to Notion and config.json`);
+          log(`[${deviceLabel}]✓ New client "${new_client.name}" added to Notion and config.json`);
         } else {
-          log(`[${deviceLabel}] New client "${new_client.name}" already exists in Notion — skipping create`);
+          log(`[${deviceLabel}]New client "${new_client.name}" already exists in Notion — skipping create`);
         }
       }
 
-      // Fallback: if Claude returned UNKNOWN but the summary or log_entry mentions a client name,
-      // scan against known client keywords and auto-resolve with low confidence
-      let finalClientName = clientName;
-      let finalConfidence = confidence;
-      if (!confirmedClient && clientName === 'UNKNOWN') {
-        const scanText = `${summary || ''} ${log_entry || ''}`.toLowerCase();
-        const fallback = resolveFallbackClient(scanText, business.clients);
-        if (fallback) {
-          log(`[${deviceLabel}] UNKNOWN resolved via summary scan → "${fallback}" (low confidence)`);
-          finalClientName = fallback;
-          finalConfidence = 'low';
-        }
-      }
+      const resolvedClient = confirmedClient || clientName;
+      const resolvedConfidence = confirmedClient ? 'high' : confidence;
 
-      const resolvedClient = confirmedClient || finalClientName;
-      const resolvedConfidence = confirmedClient ? 'high' : finalConfidence;
-
-      log(`[${deviceLabel}] Client: "${resolvedClient}" (${resolvedClient === confirmedClient ? 'GPS-confirmed' : confidence + ' confidence'}) | cache_read=${_cache_stats?.cache_read || 0} tokens`);
+      log(`[${deviceLabel}]Client: "${resolvedClient}" (${resolvedClient === confirmedClient ? 'GPS-confirmed' : confidence + ' confidence'}) | cache_read=${_cache_stats?.cache_read || 0} tokens`);
 
       // Look up client page in Notion
       const clientPageId = await notion.findClientPage(notion_token, notion_databases.clients, resolvedClient);
       if (!clientPageId && resolvedClient !== 'UNKNOWN') {
-        log(`[${deviceLabel}] WARNING: Client "${resolvedClient}" not found in Notion — writing without relation`);
+        log(`[${deviceLabel}]WARNING: Client "${resolvedClient}" not found in Notion — writing without relation`);
       }
 
       const titleClient = resolvedClient !== 'UNKNOWN' ? resolvedClient : 'Unknown Client';
       const entryTitle = `${recordingDate} — ${titleClient}`;
 
-      log(`[${deviceLabel}] Writing conversation log to Notion...`);
+      log(`[${deviceLabel}]Writing conversation log to Notion...`);
       const conversationPageId = await notion.createConversationLog(
         notion_token,
         notion_databases.conversation_log,
@@ -151,7 +109,7 @@ async function processBusiness(anthropicApiKey, business, locationTimeoutHours =
       );
 
       if (Array.isArray(client_details) && client_details.length > 0) {
-        log(`[${deviceLabel}] Writing ${client_details.length} client detail(s)...`);
+        log(`[${deviceLabel}]Writing ${client_details.length} client detail(s)...`);
         for (const detail of client_details) {
           await notion.createClientDetail(notion_token, notion_databases.client_details, {
             detail,
@@ -164,7 +122,7 @@ async function processBusiness(anthropicApiKey, business, locationTimeoutHours =
       }
 
       if (Array.isArray(commitments) && commitments.length > 0) {
-        log(`[${deviceLabel}] Writing ${commitments.length} commitment(s)...`);
+        log(`[${deviceLabel}]Writing ${commitments.length} commitment(s)...`);
         for (const c of commitments) {
           await notion.createCommitment(notion_token, notion_databases.commitments, {
             what: c.what,
@@ -177,7 +135,7 @@ async function processBusiness(anthropicApiKey, business, locationTimeoutHours =
       }
 
       if (Array.isArray(open_questions) && open_questions.length > 0) {
-        log(`[${deviceLabel}] Writing ${open_questions.length} open question(s)...`);
+        log(`[${deviceLabel}]Writing ${open_questions.length} open question(s)...`);
         for (const question of open_questions) {
           await notion.createOpenQuestion(notion_token, notion_databases.open_questions, {
             question,
@@ -194,36 +152,15 @@ async function processBusiness(anthropicApiKey, business, locationTimeoutHours =
       }
 
       markProcessed(name, recordingId, { client: resolvedClient, confidence: resolvedConfidence });
-      log(`[${deviceLabel}] ✓ Recording ${recordingId} processed successfully`);
+      log(`[${deviceLabel}]✓ Recording ${recordingId} processed successfully`);
 
     } catch (err) {
-      log(`[${deviceLabel}] ERROR processing recording ${recordingId}: ${err.message}`);
+      log(`[${deviceLabel}]ERROR processing recording ${recordingId}: ${err.message}`);
       if (err.response?.data) {
         log(`[${deviceLabel}]  API response: ${JSON.stringify(err.response.data).slice(0, 300)}`);
       }
     }
   }
-}
-
-// Scan free-form text (summary + log_entry) for client name/keyword matches.
-// Returns the best-matching client name, or null if nothing found.
-function resolveFallbackClient(text, clients = []) {
-  if (!text || !clients.length) return null;
-
-  for (const c of clients) {
-    // Build the same keyword set as the Claude prompt
-    const lastName = c.name.split(' ').slice(-1)[0];
-    const street = (c.address || '').match(/\d+\s+\S+\s+(\S+)/)?.[1] || '';
-    const custom = Array.isArray(c.keywords) ? c.keywords : [];
-    const keywords = [...new Set([...custom, c.name, lastName, street].filter(Boolean))];
-
-    for (const kw of keywords) {
-      if (kw.length >= 3 && text.includes(kw.toLowerCase())) {
-        return c.name;
-      }
-    }
-  }
-  return null;
 }
 
 function inferCategory(detail) {

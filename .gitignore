@@ -7,6 +7,18 @@ drive-service-account.json
 processed_recordings.json
 location-cache.json
 client-scopes.json
+converted-quotes.json
+
+# Client data / operational state — contains client PII, never commit
+job-plans.json
+commitments.json
+cruz-calendar.json
+review-queue.json
+voice-profiles.json
+expenses.json
+receipts.json
+recall-index.json
+capture-queue.json
 
 # Dependencies
 node_modules/

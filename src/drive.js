@@ -1,14 +1,17 @@
 /**
  * drive.js — Google Drive API client for Cruz Services
  *
- * Uses a service account to access a shared Drive folder.
- * All client files live under a root folder with one sub-folder per client.
+ * Uses a service account to access CRUZ DRIVE (Google Shared Drive).
+ * All client files live under the Shared Drive with one sub-folder per client.
  *
  * Folder structure:
- *   Cruz Services Jobs/
- *     ├── Catherine McDonald/
+ *   CRUZ DRIVE (Shared Drive)/
  *     ├── Brian Harris/
+ *     ├── Martha Glantz/
  *     └── ...
+ *
+ * Shared Drive ID: 0AOUeQmyt6sXMUk9PVA
+ * Service account must be added as Content Manager on the Shared Drive.
  */
 
 const { google } = require('googleapis');
@@ -17,6 +20,12 @@ const path = require('path');
 const axios = require('axios');
 
 const KEY_PATH = path.join(__dirname, '..', 'drive-service-account.json');
+
+// Shared Drive parameters — required for all API calls
+const SHARED_DRIVE_PARAMS = {
+  supportsAllDrives: true,
+  includeItemsFromAllDrives: true,
+};
 
 function getAuth() {
   const key = JSON.parse(fs.readFileSync(KEY_PATH, 'utf8'));
@@ -32,34 +41,77 @@ function getDrive() {
 
 // ── Folder helpers ────────────────────────────────────────────────────────────
 
-// Find a folder by name inside a parent folder. Returns folder ID or null.
-async function findFolder(drive, name, parentId) {
-  const q = [
-    `mimeType = 'application/vnd.google-apps.folder'`,
-    `name = '${name.replace(/'/g, "\\'")}'`,
-    `'${parentId}' in parents`,
-    `trashed = false`,
-  ].join(' and ');
+// Canonicalize a folder/client name for matching & creation: collapse any run of
+// whitespace to a single space and trim. This is what prevents "Jane Joyce" and
+// "Jane  Joyce" (two spaces — as Jobber sometimes stores names) from resolving to
+// two different folders and silently spawning duplicates.
+function normName(s) { return String(s || '').replace(/\s+/g, ' ').trim(); }
 
-  const res = await drive.files.list({
-    q,
-    fields: 'files(id, name)',
-    spaces: 'drive',
-  });
-  return res.data.files?.[0]?.id || null;
+// Find a folder by name inside a parent folder. Returns folder ID or null.
+//
+// Whitespace- and case-insensitive: we list the parent's child folders and match
+// on the normalized name rather than an exact Drive `name =` query. An exact
+// (raw) match always wins; otherwise we fall back to the normalized match,
+// preferring the oldest folder (the original canonical one) when duplicates still
+// exist, so lookups are stable.
+async function findFolder(drive, name, parentId) {
+  const want = normName(name).toLowerCase();
+
+  let folders = [], token = null;
+  do {
+    const res = await drive.files.list({
+      q: `mimeType = 'application/vnd.google-apps.folder' and '${parentId}' in parents and trashed = false`,
+      fields: 'nextPageToken, files(id, name, createdTime)',
+      pageSize: 200,
+      pageToken: token,
+      ...SHARED_DRIVE_PARAMS,
+    });
+    folders = folders.concat(res.data.files || []);
+    token = res.data.nextPageToken;
+  } while (token);
+
+  if (!folders.length) return null;
+  const exact = folders.find(f => f.name === name);
+  if (exact) return exact.id;
+  const matches = folders
+    .filter(f => normName(f.name).toLowerCase() === want)
+    .sort((a, b) => String(a.createdTime || '').localeCompare(String(b.createdTime || '')));
+  return matches[0]?.id || null;
 }
 
-// Create a folder inside a parent. Returns folder ID.
+// Create a folder inside a parent. Returns folder ID. Name is normalized so we
+// never create a folder whose only difference from an existing one is whitespace.
 async function createFolder(drive, name, parentId) {
   const res = await drive.files.create({
     requestBody: {
-      name,
+      name: normName(name),
       mimeType: 'application/vnd.google-apps.folder',
       parents: [parentId],
     },
     fields: 'id',
+    ...SHARED_DRIVE_PARAMS,
   });
   return res.data.id;
+}
+
+// List every client folder under the root (id + name). Used by the CLI to give
+// honest, specific answers ("exists but empty" vs "no such folder, did you mean…")
+// instead of a vague "empty" that an agent might over-interpret.
+async function listClientFolders(rootFolderId) {
+  const drive = getDrive();
+  let folders = [], token = null;
+  do {
+    const res = await drive.files.list({
+      q: `mimeType = 'application/vnd.google-apps.folder' and '${rootFolderId}' in parents and trashed = false`,
+      fields: 'nextPageToken, files(id, name)',
+      pageSize: 200,
+      pageToken: token,
+      ...SHARED_DRIVE_PARAMS,
+    });
+    folders = folders.concat(res.data.files || []);
+    token = res.data.nextPageToken;
+  } while (token);
+  return folders;
 }
 
 // Get or create a client folder under the root. Returns folder ID.
@@ -89,8 +141,8 @@ async function listFiles(rootFolderId, clientName, keyword = null) {
     q,
     fields: 'files(id, name, mimeType, size, modifiedTime, webViewLink, webContentLink)',
     orderBy: 'modifiedTime desc',
-    spaces: 'drive',
     pageSize: 20,
+    ...SHARED_DRIVE_PARAMS,
   });
   return res.data.files || [];
 }
@@ -130,6 +182,26 @@ async function uploadFile(rootFolderId, clientName, filePath, customName = null)
     },
     media: { mimeType, body: fileStream },
     fields: 'id, name, webViewLink',
+    ...SHARED_DRIVE_PARAMS,
+  });
+  return res.data;
+}
+
+// Update the CONTENT of an existing Drive file in place (same fileId, same link).
+// Used to refresh a schedule's "Materials & Schedule" doc after an edit without
+// creating a duplicate file. Returns { id, name, webViewLink }.
+async function updateFileById(fileId, filePath, newName = null) {
+  const drive = getDrive();
+  const fileStream = fs.createReadStream(filePath);
+  // Match uploadFile: .md/.txt and unknown extensions are stored as octet-stream
+  // so the in-place update keeps the existing file's type/rendering unchanged.
+  const mimeType = 'application/octet-stream';
+  const res = await drive.files.update({
+    fileId,
+    ...(newName ? { requestBody: { name: newName } } : {}),
+    media: { mimeType, body: fileStream },
+    fields: 'id, name, webViewLink',
+    ...SHARED_DRIVE_PARAMS,
   });
   return res.data;
 }
@@ -142,13 +214,14 @@ async function downloadFile(fileId, destDir = '/tmp') {
   const meta = await drive.files.get({
     fileId,
     fields: 'id, name, mimeType',
+    ...SHARED_DRIVE_PARAMS,
   });
   const fileName = meta.data.name;
   const destPath = path.join(destDir, fileName);
 
   const dest = fs.createWriteStream(destPath);
   const res = await drive.files.get(
-    { fileId, alt: 'media' },
+    { fileId, alt: 'media', ...SHARED_DRIVE_PARAMS },
     { responseType: 'stream' }
   );
 
@@ -203,9 +276,61 @@ async function ensureClientFolder(rootFolderId, clientName) {
 
 module.exports = {
   listFiles,
+  listClientFolders,
   uploadFile,
+  updateFileById,
   downloadFile,
   uploadFromTelegram,
   ensureClientFolder,
   getClientFolder,
+  moveFile,
+  trashFolder,
+  mergeFolders,
 };
+
+
+// Move a file from one folder to another (used for merging duplicate client folders)
+async function moveFile(fileId, fromFolderId, toFolderId) {
+  const d = getDrive();
+  const res = await d.files.update({
+    fileId,
+    addParents: toFolderId,
+    removeParents: fromFolderId,
+    fields: 'id, name, webViewLink',
+    ...SHARED_DRIVE_PARAMS,
+  });
+  return res.data;
+}
+
+// Trash a folder by ID
+async function trashFolder(folderId) {
+  const d = getDrive();
+  await d.files.update({
+    fileId: folderId,
+    requestBody: { trashed: true },
+    ...SHARED_DRIVE_PARAMS,
+  });
+}
+
+// Merge all files from sourceName folder into targetName folder, then trash source
+async function mergeFolders(rootFolderId, sourceName, targetName) {
+  const d = getDrive();
+  const sourceFolderId = await findFolder(d, sourceName, rootFolderId);
+  if (!sourceFolderId) throw new Error('Source folder not found: ' + sourceName);
+  const targetFolderId = await findFolder(d, targetName, rootFolderId);
+  if (!targetFolderId) throw new Error('Target folder not found: ' + targetName);
+
+  const res = await d.files.list({
+    q: "'" + sourceFolderId + "' in parents and trashed = false",
+    fields: 'files(id, name)',
+    ...SHARED_DRIVE_PARAMS,
+  });
+  const files = res.data.files || [];
+
+  for (const file of files) {
+    await moveFile(file.id, sourceFolderId, targetFolderId);
+  }
+
+  await trashFolder(sourceFolderId);
+  return { moved: files.length, files: files.map(f => f.name) };
+}
