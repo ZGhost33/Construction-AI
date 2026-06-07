@@ -1,7 +1,12 @@
 # Secrets and credentials — never commit these
 config.json
+config.json.bak-*
+*.bak-*
 jobber-tokens.json
 drive-service-account.json
+
+# Deployment registry — host list, never commit (template: deployments.example.json)
+deployments.json
 
 # Runtime state — machine-specific
 processed_recordings.json

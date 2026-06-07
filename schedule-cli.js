@@ -33,6 +33,9 @@ const NODE = process.execPath;
 const JOBBER = path.join(DIR, 'jobber-cli.js');
 const cfg = JSON.parse(fs.readFileSync(path.join(DIR, 'config.json'), 'utf8'));
 const ROOT_FOLDER_ID = cfg.google_drive_root_folder_id;
+let _set = {};
+try { _set = require('./src/config').settings(cfg); } catch { _set = {}; }
+const CAL = _set.calendarName || 'Cruz Schedule';
 
 const planner = require('./schedule-planner');
 const api = require('./jobber-api');
@@ -421,7 +424,7 @@ async function cmdApprove(args) {
       const cal = require('./calendar-writer');
       const res = await cal.writeScheduleToCalendar(p);
       outputs.calendar = { count: res.created.length, replaced: res.replaced };
-      report.push(`✓ Calendar: ${res.created.length} event(s) on "Cruz Schedule"${res.replaced ? ` (replaced ${res.replaced})` : ''}`);
+      report.push(`✓ Calendar: ${res.created.length} event(s) on "${CAL}"${res.replaced ? ` (replaced ${res.replaced})` : ''}`);
     } catch (e) {
       outputs.calendar_pending = true;
       report.push(`⏳ Calendar not written: ${e.message}\n   (Run \`schedule-cli.js calendar ${p.job_number}\` after enabling/sharing the calendar.)`);
@@ -563,21 +566,21 @@ async function cmdEvent(args) {
       ? `${ev.start}${ev.end && ev.end !== ev.start ? ' → ' + ev.end : ''} (all day)`
       : `${ev.start.replace('T', ' ')}${ev.end ? ' → ' + ev.end.replace('T', ' ').slice(11) : ''} ET`;
     if (!flags.yes) {
-      console.log(`Will add to "Cruz Schedule":\n   ${ev.summary}\n   ${when}` +
+      console.log(`Will add to "${CAL}":\n   ${ev.summary}\n   ${when}` +
         (ev.location ? `\n   @ ${ev.location}` : '') + (ev.notes ? `\n   ${ev.notes}` : ''));
       console.log(`\nConfirm with:  schedule-cli.js event add "${text}" --yes`);
       return;
     }
     const res = await cal.addAdhocEvent(ev);
-    console.log(`✓ Added to Cruz Schedule [${res.aid}]: ${res.summary} — ${when}`);
+    console.log(`✓ Added to ${CAL} [${res.aid}]: ${res.summary} — ${when}`);
     return;
   }
 
   if (sub === 'list') {
     const days = flags.days ? Number(flags.days) : 60;
     const items = await cal.listAdhocEvents({ days });
-    if (!items.length) { console.log(`No ad-hoc events on Cruz Schedule in the next ${days} days.`); return; }
-    console.log(`Ad-hoc events on Cruz Schedule (next ${days} days):`);
+    if (!items.length) { console.log(`No ad-hoc events on ${CAL} in the next ${days} days.`); return; }
+    console.log(`Ad-hoc events on ${CAL} (next ${days} days):`);
     for (const e of items) {
       const when = e.all_day ? e.start + ' (all day)' : e.start.replace('T', ' ').slice(0, 16) + ' ET';
       console.log(`  [${e.aid || '------'}] ${when} — ${e.summary}${e.location ? ' @ ' + e.location : ''}`);
@@ -589,7 +592,7 @@ async function cmdEvent(args) {
     const key = rest.join(' ');
     if (!key) { console.error('Usage: schedule-cli.js event delete <id|summary>'); process.exit(1); }
     const res = await cal.deleteAdhocEvent(key);
-    console.log(`✓ Deleted from Cruz Schedule: ${res.summary}`);
+    console.log(`✓ Deleted from ${CAL}: ${res.summary}`);
     return;
   }
 

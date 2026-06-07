@@ -22,8 +22,10 @@ const { google } = require('googleapis');
 const DIR = __dirname;
 const KEY_PATH = path.join(DIR, 'drive-service-account.json');
 const ID_FILE = path.join(DIR, 'cruz-calendar.json'); // { "calendar_id": "...@group.calendar.google.com" }
-const CALENDAR_NAME = 'Cruz Schedule';
-const TZ = 'America/New_York';
+let _set = {};
+try { _set = require('./src/config').settings(); } catch { /* config may be absent in some contexts */ }
+const CALENDAR_NAME = _set.calendarName || 'Cruz Schedule';
+const TZ = _set.timezone || 'America/New_York';
 
 function getCalendar() {
   const key = JSON.parse(fs.readFileSync(KEY_PATH, 'utf8'));

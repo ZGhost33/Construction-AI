@@ -22,7 +22,10 @@ const CONFIG = path.join(DIR, 'config.json');
 const LEDGER = path.join(DIR, 'commitments.json');
 
 const cfg = JSON.parse(fs.readFileSync(CONFIG, 'utf8'));
-const TOKEN = cfg.businesses[0].notion_token;
+let _set = {};
+try { _set = require('./src/config').settings(cfg); } catch { _set = {}; }
+const TZ = _set.timezone || 'America/New_York';
+const TOKEN = cfg.notion_token || cfg.businesses?.[0]?.notion_token;
 const DBS = cfg.notion_databases || cfg.businesses[0].notion_databases || {};
 const COMMIT_DB = DBS.commitments;
 const CLIENTS_DB = DBS.clients;
@@ -54,7 +57,7 @@ async function notionRetry(method, p, body) {
 }
 
 function norm(s) { return String(s || '').toLowerCase().replace(/&/g, ' and ').replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim(); }
-function todayStr() { return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date()); }
+function todayStr() { return new Intl.DateTimeFormat('en-CA', { timeZone: TZ }).format(new Date()); }
 
 // Map a local item's status to the Notion select. Open + past-due => OVERDUE.
 function notionStatus(it) {

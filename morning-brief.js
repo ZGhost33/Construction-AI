@@ -17,14 +17,17 @@ const QUEUE = path.join(DIR, 'review-queue.json');
 
 function readJSON(p, fallback) { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return fallback; } }
 
-// Brief is generated in Eastern time (Luis is in FL). Compute "today" in ET so
-// overdue math lines up with how Luis thinks about dates.
+// Brief is generated in the business's local time. Compute "today" in that tz so
+// overdue math lines up with how the operator thinks about dates.
+const TZ = (() => {
+  try { return require('./src/config').settings().timezone; } catch { return 'America/New_York'; }
+})();
 function etTodayStr() {
   // en-CA gives YYYY-MM-DD
-  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
+  return new Intl.DateTimeFormat('en-CA', { timeZone: TZ }).format(new Date());
 }
 function etHeaderDate() {
-  return new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'short', day: 'numeric' }).format(new Date());
+  return new Intl.DateTimeFormat('en-US', { timeZone: TZ, weekday: 'short', month: 'short', day: 'numeric' }).format(new Date());
 }
 function daysBetween(aStr, bStr) {
   const a = new Date(aStr + 'T00:00:00Z'), b = new Date(bStr + 'T00:00:00Z');

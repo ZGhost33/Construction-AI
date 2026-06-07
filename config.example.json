@@ -1,11 +1,29 @@
 {
+  "schema_version": 1,
+  "business_short_name": "Your Business",
+  "timezone": "America/New_York",
+  "calendar_name": "Your Business Schedule",
   "anthropic_api_key": "sk-ant-api03-YOUR_KEY_HERE",
+  "notion_token": "ntn_YOUR_NOTION_INTEGRATION_TOKEN",
+  "notion_databases": {
+    "clients": "NOTION_DATABASE_ID",
+    "conversation_log": "NOTION_DATABASE_ID",
+    "client_details": "NOTION_DATABASE_ID",
+    "commitments": "NOTION_DATABASE_ID",
+    "open_questions": "NOTION_DATABASE_ID"
+  },
+  "google_drive_root_folder_id": "GOOGLE_DRIVE_FOLDER_ID",
+  "google_drive_is_shared_drive": false,
+  "azure_speaker_key": "YOUR_AZURE_SPEECH_KEY_OR_EMPTY",
+  "azure_speaker_region": "eastus",
+  "auto_write_mode": false,
+  "silence_threshold_seconds": 1800,
   "poll_interval_minutes": 15,
   "location_server_port": 3456,
   "location_timeout_hours": 12,
   "businesses": [
     {
-      "name": "Your Business Name",
+      "name": "Your Business Name LLC",
       "pocket_api_key": "pk_YOUR_PRIMARY_POCKET_KEY",
       "pocket_devices": [
         { "api_key": "pk_DEVICE_1_KEY", "person": "Person 1" },
@@ -36,24 +54,10 @@
         }
       ],
       "people": [
-        { "name": "Luis", "role": "general contractor, always present" },
-        { "name": "Jorge", "role": "general manager" },
-        { "name": "Danilo", "role": "field supervisor" }
+        { "name": "Owner", "role": "general contractor, always present" },
+        { "name": "Manager", "role": "general manager" },
+        { "name": "Supervisor", "role": "field supervisor" }
       ]
-    },
-    {
-      "name": "Second Business",
-      "pocket_api_key": "pk_REPLACE_ME",
-      "notion_token": "secret_REPLACE_ME",
-      "notion_databases": {
-        "clients": "REPLACE_ME",
-        "conversation_log": "REPLACE_ME",
-        "client_details": "REPLACE_ME",
-        "commitments": "REPLACE_ME",
-        "open_questions": "REPLACE_ME"
-      },
-      "clients": [],
-      "people": []
     }
   ]
 }

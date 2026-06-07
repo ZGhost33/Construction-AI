@@ -159,7 +159,7 @@ async function cmdUploadTelegram(telegramFileId, clientName, customName) {
 
 async function cmdFolders() {
   // List client folders using the configured client list as reference
-  const biz = config.businesses.find(b => b.name === 'Cruz Services');
+  const biz = config.businesses[0];
   const clients = biz?.clients || [];
   console.log(`Configured clients (${clients.length}):`);
   clients.forEach(c => console.log(`  • ${c.name}`));

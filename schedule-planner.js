@@ -24,13 +24,18 @@ const DIR = __dirname;
 const cfg = JSON.parse(fs.readFileSync(path.join(DIR, 'config.json'), 'utf8'));
 const API_KEY = cfg.anthropic_api_key || cfg.businesses?.[0]?.anthropic_api_key;
 const MODEL = 'claude-sonnet-4-6';
+let SET = {};
+try { SET = require('./src/config').settings(cfg); } catch { SET = {}; }
+const TZ = SET.timezone || 'America/New_York';
+const BUSINESS_NAME = SET.businessName || 'Cruz Services';
+const CALENDAR_NAME = SET.calendarName || 'Cruz Schedule';
 
-// ── date helpers (server is UTC; the business runs on US Eastern) ─────────────
+// ── date helpers (server is UTC; the business runs on configured timezone) ────
 function etDate(iso) {
-  // Return YYYY-MM-DD in America/New_York for an ISO timestamp (or Date).
+  // Return YYYY-MM-DD in the configured timezone for an ISO timestamp (or Date).
   const d = iso ? new Date(iso) : new Date();
   return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit',
+    timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit',
   }).format(d);
 }
 
@@ -143,7 +148,7 @@ function buildScopeText(job) {
   }).join('\n\n');
 }
 
-const SCHEMA_PROMPT = `You are an experienced residential general-contractor planner for a small construction company (Cruz Services). Given a job's scope of work and a tentative START DATE, produce a realistic, conservative, week-by-week TENTATIVE schedule and a materials list.
+const SCHEMA_PROMPT = `You are an experienced residential general-contractor planner for a small construction company (${BUSINESS_NAME}). Given a job's scope of work and a tentative START DATE, produce a realistic, conservative, week-by-week TENTATIVE schedule and a materials list.
 
 Rules:
 - Break the work into sequential PHASES grouped into calendar weeks starting from the given start date. A typical small residential job is 1-6 weeks; do not pad. Crews work Mon-Fri.
@@ -306,7 +311,7 @@ async function applyEdit(plan, instruction) {
 }
 
 // ── natural-language → structured ad-hoc calendar event ──────────────────────
-const EVENT_PROMPT = `Convert the user's request into ONE calendar event for a small construction company's shared "Cruz Schedule" calendar. Resolve all relative dates/times against the provided NOW (America/New_York).
+const EVENT_PROMPT = `Convert the user's request into ONE calendar event for a small construction company's shared "${CALENDAR_NAME}" calendar. Resolve all relative dates/times against the provided NOW (${TZ}).
 
 Return ONE JSON object, no prose, no code fences:
 {
@@ -329,10 +334,10 @@ async function parseAdhocEvent(text) {
   if (!API_KEY) throw new Error('anthropic_api_key not found in config.json');
   const now = new Date();
   const nowStr = new Intl.DateTimeFormat('en-US', {
-    timeZone: 'America/New_York', weekday: 'long', year: 'numeric', month: '2-digit',
+    timeZone: TZ, weekday: 'long', year: 'numeric', month: '2-digit',
     day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false,
   }).format(now);
-  const userText = `NOW (America/New_York): ${nowStr}\nTODAY: ${etDate()}\n\nREQUEST: ${text}\n`;
+  const userText = `NOW (${TZ}): ${nowStr}\nTODAY: ${etDate()}\n\nREQUEST: ${text}\n`;
   const res = await anthropic({
     model: MODEL, max_tokens: 1000, temperature: 0,
     messages: [{ role: 'user', content: [{ type: 'text', text: EVENT_PROMPT + '\n\n---\n\n' + userText }] }],

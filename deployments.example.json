@@ -1,0 +1,14 @@
+{
+  "_comment": "Registry of live deployments for deploy.sh. Copy to deployments.json (gitignored) and fill in real hosts. deploy.sh pushes CODE + optional SKILLS only — never config.json, credentials, or state files.",
+  "targets": [
+    {
+      "name": "example-business",
+      "host": "root@SERVER_IP_OR_HOST",
+      "repo_dir": "/root/construction-bi-pipeline",
+      "node_bin": "/root/.hermes/node/bin/node",
+      "skills_src": "",
+      "skills_dir": "/root/.hermes/profiles/z/skills/construction",
+      "enabled": true
+    }
+  ]
+}
