@@ -124,7 +124,7 @@ if (!present(notionToken)) {
   warn('notion_token not set (top-level or businesses[0]) — Notion sync disabled.');
 } else {
   pass(`notion_token ${mask(notionToken)}`);
-  if (!cfg.notion_token) warn('notion_token only present under businesses[0]; monitor scripts read the top-level key — mirror it to the top level.');
+  if (cfg.notion_token) warn('notion_token is set at the top level; businesses[0].notion_token is now canonical and all readers fall back to it — the top-level copy is redundant and can be removed.');
   const REQ_DBS = ['clients', 'conversation_log', 'client_details', 'commitments', 'open_questions'];
   if (!notionDbs || typeof notionDbs !== 'object') {
     err('notion_databases is missing — required for Notion sync.');

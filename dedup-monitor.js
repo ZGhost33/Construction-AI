@@ -4,15 +4,18 @@ const fs = require('fs');
 const path = require('path');
 
 const cfg = JSON.parse(fs.readFileSync(path.join(__dirname, 'config.json'), 'utf8'));
-const NOTION_TOKEN = cfg.notion_token || process.env.NOTION_TOKEN;
+const NOTION_TOKEN = cfg.notion_token || cfg.businesses?.[0]?.notion_token || process.env.NOTION_TOKEN;
 if (!NOTION_TOKEN) { console.error('notion_token missing from config.json'); process.exit(1); }
 
-const DBS = {
+// DB ids are sourced from config (businesses[0] is canonical). The hardcoded
+// values are a last-resort fallback for un-migrated configs and match the
+// original Cruz deployment.
+const DBS = Object.assign({
   conversation_log: '34d0b35e-5a9e-80a8-87e3-e45e2bfd5270',
   client_details: '34d0b35e-5a9e-80a1-b732-e7fd6d850caa',
   commitments: '34d0b35e-5a9e-80c7-b37a-fa02631bf146',
   open_questions: '34d0b35e-5a9e-80e9-949b-c5c857a06aaa'
-};
+}, cfg.notion_databases || cfg.businesses?.[0]?.notion_databases || {});
 
 function notionFetch(url, body) {
   return new Promise((resolve, reject) => {

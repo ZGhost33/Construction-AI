@@ -28,8 +28,6 @@ is already at the current version is a no-op.
 | `timezone` | IANA string | no | `America/New_York` | Drives all date math (briefs, schedules, "today"), and the cron times in `provision.sh`. **Set this per business.** |
 | `calendar_name` | string | no | `Cruz Schedule` | Exact name of the shared Google Calendar the pipeline writes job events to. The service account must have edit access to a calendar with this name. |
 | `anthropic_api_key` | string | **yes** | — | Claude API key. `loadConfig()` throws if missing or still the placeholder. |
-| `notion_token` | string | yes (for Notion sync) | mirrors `businesses[0].notion_token` | Notion integration token used by the monitor/sync scripts. |
-| `notion_databases` | object | yes (for Notion sync) | may live under `businesses[0]` | Map of database IDs: `clients`, `conversation_log`, `client_details`, `commitments`, `open_questions`. |
 | `google_drive_root_folder_id` | string | yes (for Drive) | — | Root Drive folder where per-client folders & schedule docs are written. |
 | `azure_speaker_key` | string | no | — | Azure Speech key for speaker identification. If empty/omitted, voice ID is skipped. |
 | `azure_speaker_region` | string | no | `eastus` | Azure Speech region. |
@@ -47,9 +45,9 @@ is already at the current version is a no-op.
 | `name` | string | **yes** | Legal/display business name. Used in planner prompts. |
 | `pocket_api_key` | string | yes (for ingest) | Primary Pocket (recorder) API key. |
 | `pocket_devices` | array | no | `[{ "api_key", "person" }]` — maps each recorder device to the person wearing it. |
-| `notion_token` | string | yes (for Notion) | Notion integration token (mirror of the top-level one). |
+| `notion_token` | string | yes (for Notion) | Notion integration token. **Canonical location** — the monitor/sync scripts and all readers source it here. |
 | `jobber` | object | yes (for Jobber) | `{ client_id, client_secret, redirect_uri }`. OAuth tokens are stored separately in `jobber-tokens.json`. |
-| `notion_databases` | object | yes (for Notion) | Same shape as the top-level map. |
+| `notion_databases` | object | yes (for Notion) | Map of database IDs: `clients`, `conversation_log`, `client_details`, `commitments`, `open_questions`. |
 | `clients` | array | yes | The **closed client roster**: `[{ name, address, keywords? }]`. The pipeline never invents clients outside this list. |
 | `people` | array | yes | `[{ name, role }]` — the crew, for speaker attribution. |
 

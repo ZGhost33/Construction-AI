@@ -24,15 +24,15 @@ const CURRENT_SCHEMA = 1;
 const MIGRATIONS = [
   {
     to: 1,
-    note: 'introduce schema_version + business-agnostic settings (timezone, calendar_name, business_short_name) and surface notion_token at top level',
+    note: 'introduce schema_version + business-agnostic settings (timezone, calendar_name, business_short_name)',
     apply(cfg) {
       const biz = (Array.isArray(cfg.businesses) && cfg.businesses[0]) || {};
       if (cfg.business_short_name == null) cfg.business_short_name = biz.name || 'the company';
       if (cfg.timezone == null) cfg.timezone = 'America/New_York';
       if (cfg.calendar_name == null) cfg.calendar_name = 'Cruz Schedule';
-      // The monitor/sync scripts read a top-level notion_token; mirror it from
-      // businesses[0] if it only lives there.
-      if (cfg.notion_token == null && biz.notion_token) cfg.notion_token = biz.notion_token;
+      // notion_token / notion_databases are canonical under businesses[0]; all
+      // readers fall back to it, so we deliberately do NOT surface a top-level
+      // copy here (consolidated to a single source of truth).
       cfg.schema_version = 1;
       return cfg;
     },
