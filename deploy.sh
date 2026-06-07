@@ -83,6 +83,7 @@ RSYNC_EXCLUDES=(
   --exclude 'jobber-tokens.json'
   --exclude 'drive-service-account.json'
   --exclude 'processed_recordings.json'
+  --exclude 'ingest-attempts.json'
   --exclude 'location-cache.json'
   --exclude 'client-scopes.json'
   --exclude 'converted-quotes.json'

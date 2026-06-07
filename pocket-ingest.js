@@ -33,7 +33,7 @@ const { fetchRecordings }       = require('./src/pocket');
 const { getRecordingWithAudio } = require('./src/pocket-mcp');
 const { segmentRecording }      = require('./src/segmenter');
 const { analyzeConversation }   = require('./src/claude');
-const { isProcessed, markProcessed } = require('./src/storage');
+const { isProcessed, markProcessed, bumpAttempt, clearAttempts } = require('./src/storage');
 const { log }                   = require('./src/logger');
 
 const NODE   = '/root/.hermes/node/bin/node';
@@ -42,6 +42,10 @@ const PY_SCRIPT = path.join(__dirname, 'voice-identify.py');
 const JOBBER_CLI = path.join(__dirname, 'jobber-cli.js');
 const REVIEW_QUEUE_PATH = path.join(__dirname, 'review-queue.json');
 const CONFIG_PATH = path.join(__dirname, 'config.json');
+
+// Give a transiently-failing recording this many cron runs to succeed before we
+// mark it processed-with-error and stop retrying (prevents poison-recording loops).
+const MAX_INGEST_ATTEMPTS = 3;
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -340,8 +344,29 @@ async function runIngestion() {
       log(`[Ingest] ${devicePerson}: ${newRecs.length} new recording(s)`);
 
       for (const rec of newRecs) {
-        await processRecording(rec, apiKey, devicePerson, business, silenceThreshold, autoWriteMode, newQueueItems);
-        markProcessed(business.name, rec.id, { device: devicePerson, processed_by: 'pocket-ingest' });
+        // A recording is marked processed ONLY when processRecording reaches a
+        // terminal outcome (resolves). A transient failure throws → we don't mark,
+        // so the next cron run retries with a fresh signed URL. A bounded counter
+        // prevents both silent drops and infinite retries of a poison recording.
+        // The per-recording try/catch also stops one bad recording from aborting
+        // the whole batch.
+        try {
+          await processRecording(rec, apiKey, devicePerson, business, silenceThreshold, autoWriteMode, newQueueItems);
+          markProcessed(business.name, rec.id, { device: devicePerson, processed_by: 'pocket-ingest' });
+          clearAttempts(business.name, rec.id);
+        } catch (err) {
+          const attempts = bumpAttempt(business.name, rec.id);
+          if (attempts >= MAX_INGEST_ATTEMPTS) {
+            log(`[Ingest] ${rec.id}: failed ${attempts}x (${err.message}) — giving up, marking processed`);
+            markProcessed(business.name, rec.id, {
+              device: devicePerson, processed_by: 'pocket-ingest',
+              failed: true, last_error: err.message, attempts,
+            });
+            clearAttempts(business.name, rec.id);
+          } else {
+            log(`[Ingest] ${rec.id}: transient failure (attempt ${attempts}/${MAX_INGEST_ATTEMPTS}): ${err.message} — will retry next run`);
+          }
+        }
       }
     }
   }
@@ -362,6 +387,7 @@ async function processRecording(rec, apiKey, devicePerson, business, silenceThre
 
   // Step 1: Get transcript segments + signed audio URL via Pocket MCP
   let mcpResult;
+  let mcpFailed = false;
   try {
     mcpResult = await getRecordingWithAudio(apiKey, recId);
   } catch (err) {
@@ -371,10 +397,18 @@ async function processRecording(rec, apiKey, devicePerson, business, silenceThre
       transcriptSegments: rec.transcript?.segments || [],
       audioUrl: null,
     };
+    mcpFailed = true;
   }
 
   const segments = mcpResult.transcriptSegments || [];
   if (segments.length === 0) {
+    // If MCP failed AND the REST list carried no transcript (it usually doesn't),
+    // this is a TRANSIENT empty — not a genuinely empty recording. Throw so the
+    // caller leaves it unmarked and retries next run with a fresh signed URL,
+    // rather than silently dropping the whole recording.
+    if (mcpFailed) {
+      throw new Error(`no segments after MCP failure — transient, retry`);
+    }
     log(`[Ingest] ${recId}: no segments — skipping`);
     return;
   }
@@ -424,7 +458,27 @@ async function processConversation(conv, recId, recDate, devicePerson, voiceMatc
       null     // knownJobs — populated below for high-confidence cases
     );
   } catch (err) {
-    log(`[Ingest] ${label}: Claude analysis failed: ${err.message}`);
+    // Don't silently drop this conversation. We can't safely retry the whole
+    // recording (earlier conversations may already have written Jobber notes in
+    // normal mode → double-write), so surface it to the review queue instead.
+    log(`[Ingest] ${label}: Claude analysis failed: ${err.message} — queuing for manual review`);
+    const item = {
+      id: 'rq_' + crypto.randomBytes(6).toString('hex'),
+      recording_id: recId,
+      recording_date: recDate,
+      conversation_index: conv.index,
+      device_person: devicePerson,
+      transcript_snippet: conv.transcript.slice(0, 300),
+      bucket: 'uncertain',
+      proposed_client: 'UNKNOWN',
+      proposed_action: 'review',
+      proposed_note: null,
+      confidence: 'low',
+      reason: 'Claude analysis failed: ' + err.message,
+      signals: { device: devicePerson, voice: Object.keys(voiceMatches).length ? voiceMatches : null },
+    };
+    addToQueue(item);
+    newQueueItems.push(item);
     return;
   }
 

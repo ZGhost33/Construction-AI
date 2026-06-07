@@ -54,12 +54,18 @@ smoke-test per target. `provision.sh` stands up a fresh box (incl. the speaker-I
 - **Never commit** `config.json`, `*-tokens.json`, `drive-service-account.json`, or any
   client-data/state JSON (`.gitignore` blocks them; `node_modules` is gitignored too).
 
-## Known caveat — mark-processed timing (unfixed as of this writing)
+## Ingest idempotency / retry (mark-processed timing)
 
-`pocket-ingest.js` marks a recording processed on *any normal return* of
-`processRecording()`. Two failure paths return normally and thus silently mark
-(never retried): (A) MCP fetch fails → REST list has no transcript segments →
-"no segments, skipping" → whole recording dropped; (B) `analyzeConversation` throws →
-that conversation is dropped. Download/Jobber failures degrade gracefully (no drop).
-If touching ingest reliability, make marking conditional on a terminal outcome + add a
-bounded attempt counter in `processed_recordings.json`.
+`pocket-ingest.js` marks a recording processed **only when `processRecording()`
+resolves** (a terminal outcome). Transient failures **throw** → the recording is left
+unmarked and retried on the next cron run with a fresh signed URL. A bounded counter in
+`ingest-attempts.json` (separate file, so a pending retry is never read as "done") caps
+this at `MAX_INGEST_ATTEMPTS` (3) before marking processed-with-error. The per-recording
+loop is wrapped in try/catch so one bad recording never aborts the batch.
+
+Specifics: (A) MCP fetch fails with no usable REST transcript → throws → retried.
+(B) `analyzeConversation` failure does **not** retry the whole recording (earlier
+conversations may already have written Jobber notes → double-write); instead the failed
+conversation is pushed to `review-queue.json` so it surfaces for a human. Download
+failures degrade gracefully (content still analyzed, no speaker names); Jobber write
+failures fall back to the review queue.

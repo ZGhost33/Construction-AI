@@ -10,6 +10,7 @@ deployments.json
 
 # Runtime state — machine-specific
 processed_recordings.json
+ingest-attempts.json
 location-cache.json
 client-scopes.json
 converted-quotes.json
