@@ -147,7 +147,9 @@ while IFS=$'\t' read -r NAME HOST REPO_DIR NODE_BIN SKILLS_SRC SKILLS_DIR; do
     printf '   %s[dry-run]%s ssh %s %s validate-config.js\n' "$c_yel" "$c_off" "$HOST" "$NODE_BIN"
     vres=0
   else
-    ssh "$HOST" "$NODE_BIN $REPO_DIR/validate-config.js" >/tmp/deploy_val 2>&1; vres=$?
+    # `&& vres=0 || vres=$?` keeps a non-zero exit from tripping `set -e`
+    # before the per-target report is printed.
+    ssh "$HOST" "$NODE_BIN $REPO_DIR/validate-config.js" >/tmp/deploy_val 2>&1 && vres=0 || vres=$?
     tail -n 4 /tmp/deploy_val | sed 's/^/      /'
   fi
 
@@ -158,7 +160,7 @@ while IFS=$'\t' read -r NAME HOST REPO_DIR NODE_BIN SKILLS_SRC SKILLS_DIR; do
     if [ "$DRY_RUN" -eq 1 ]; then
       printf '   %s[dry-run]%s ssh %s %s smoke-test.js\n' "$c_yel" "$c_off" "$HOST" "$NODE_BIN"
     else
-      ssh "$HOST" "$NODE_BIN $REPO_DIR/smoke-test.js" >/tmp/deploy_smoke 2>&1; sres=$?
+      ssh "$HOST" "$NODE_BIN $REPO_DIR/smoke-test.js" >/tmp/deploy_smoke 2>&1 && sres=0 || sres=$?
       grep -E '✓|✖|·|RESULT' /tmp/deploy_smoke | sed 's/^/      /' || true
     fi
   fi

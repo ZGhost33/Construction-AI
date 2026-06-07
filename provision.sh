@@ -9,6 +9,7 @@
 #   1. ensure git + Node 22
 #   2. clone (or fast-forward) the repo
 #   3. npm ci
+#   3b. set up the speaker-ID Python venv (resemblyzer; local, no cloud key)
 #   4. place config.json + credential files from an operator secrets dir
 #   5. validate-config.js  (ABORTS on schema errors)
 #   6. generate Hermes cron wrapper scripts
@@ -32,6 +33,7 @@
 #   --node-bin PATH   node binary             (default: /root/.hermes/node/bin/node)
 #   --force           overwrite an existing config.json from --secrets
 #   --skip-cron       do not touch Hermes crons
+#   --skip-voice      do not set up the speaker-ID Python venv
 #   --dry-run         print every action, change nothing
 #   -h, --help        this help
 #
@@ -48,7 +50,10 @@ HERMES_SCRIPTS="$HOME/.hermes/scripts"
 HERMES_LOGS="$HOME/.hermes/logs"
 FORCE=0
 SKIP_CRON=0
+SKIP_VOICE=0
 DRY_RUN=0
+# Speaker-ID venv path is hardcoded in pocket-ingest.js (PYTHON); keep in sync.
+VOICE_VENV="/root/venv-voice"
 
 # ── arg parsing ───────────────────────────────────────────────────────────────
 while [ $# -gt 0 ]; do
@@ -61,8 +66,9 @@ while [ $# -gt 0 ]; do
     --node-bin)  NODE_BIN="$2"; shift 2 ;;
     --force)     FORCE=1; shift ;;
     --skip-cron) SKIP_CRON=1; shift ;;
+    --skip-voice) SKIP_VOICE=1; shift ;;
     --dry-run)   DRY_RUN=1; shift ;;
-    -h|--help)   sed -n '2,40p' "$0"; exit 0 ;;
+    -h|--help)   sed -n '2,42p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -111,6 +117,36 @@ else
   run sh -c "cd '$REPO_DIR' && npm install"
 fi
 ok "dependencies installed"
+
+# ── 3b. speaker-ID Python venv (local resemblyzer; no cloud key) ──────────────
+# Speaker identification runs locally via voice-identify.py (resemblyzer/torch)
+# inside a dedicated venv that pocket-ingest.js invokes by absolute path.
+# Idempotent: skips if the venv already imports the full stack. Non-fatal —
+# if this can't complete, the pipeline still runs and degrades to no speaker
+# attribution.
+if [ "$SKIP_VOICE" -eq 1 ]; then
+  warn "skipping speaker-ID venv setup (--skip-voice)"
+else
+  log "Setting up speaker-ID venv at $VOICE_VENV (resemblyzer)"
+  VPY="$VOICE_VENV/bin/python3"
+  command -v ffmpeg >/dev/null 2>&1 || warn "ffmpeg not found — speaker ID needs it (apt-get install -y ffmpeg)"
+  if [ "$DRY_RUN" -eq 1 ]; then
+    printf '   %s[dry-run]%s python3 -m venv %s && %s -m pip install numpy resemblyzer soundfile librosa\n' "$c_yel" "$c_off" "$VOICE_VENV" "$VPY"
+  elif [ -x "$VPY" ] && "$VPY" -c 'import numpy,resemblyzer,soundfile,librosa,torch' 2>/dev/null; then
+    ok "speaker-ID venv already complete — skipping"
+  elif ! command -v python3 >/dev/null 2>&1; then
+    warn "python3 not found — skipping speaker-ID venv (install python3 + python3-venv, then re-run)"
+  else
+    [ -x "$VPY" ] || python3 -m venv "$VOICE_VENV" || die "failed to create venv at $VOICE_VENV (need python3-venv)"
+    "$VPY" -m pip install --quiet --upgrade pip || warn "pip upgrade failed — continuing"
+    if "$VPY" -m pip install --quiet numpy resemblyzer soundfile librosa \
+       && "$VPY" -c 'import numpy,resemblyzer,soundfile,librosa,torch' 2>/dev/null; then
+      ok "speaker-ID venv ready ($VOICE_VENV)"
+    else
+      warn "speaker-ID venv install failed — pipeline will run without speaker attribution; re-run after fixing Python deps"
+    fi
+  fi
+fi
 
 # ── 4. place secrets ──────────────────────────────────────────────────────────
 log "Placing config + credentials"

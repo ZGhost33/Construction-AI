@@ -147,9 +147,10 @@ if (!fs.existsSync(path.join(DIR, 'drive-service-account.json'))) {
   pass('drive-service-account.json present');
 }
 
-// ── Azure (optional) ─────────────────────────────────────────────────────────
-if (present(cfg.azure_speaker_key)) pass(`azure_speaker_key ${mask(cfg.azure_speaker_key)} (region ${cfg.azure_speaker_region || 'eastus'})`);
-else warn('azure_speaker_key not set — speaker identification will be skipped (non-fatal).');
+// ── Speaker identification ───────────────────────────────────────────────────
+// Speaker ID is local (resemblyzer venv via voice-identify.py), not a config
+// field. Flag a leftover Azure key so it can be removed from older configs.
+if (present(cfg.azure_speaker_key)) warn('azure_speaker_key is set but unused — speaker ID is local (resemblyzer); this key can be removed.');
 
 // ── report ───────────────────────────────────────────────────────────────────
 console.log(`\n=== validate-config: ${CONFIG_PATH} ===\n`);

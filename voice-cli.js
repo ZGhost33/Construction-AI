@@ -202,9 +202,8 @@ Commands:
   inbox                               Show pending audio files in inbox
 
 Setup:
-  Add to config.json:
-    "azure_speaker_key": "your-azure-key",
-    "azure_speaker_region": "eastus"
+  Speaker ID runs locally via resemblyzer (no cloud key needed).
+  Requires the Python venv at /root/venv-voice (created by provision.sh).
 
 Workflow:
   1. Enroll each person once with a clear audio sample

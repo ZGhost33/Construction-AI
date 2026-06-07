@@ -6,8 +6,6 @@
   "anthropic_api_key": "sk-ant-api03-YOUR_KEY_HERE",
   "google_drive_root_folder_id": "GOOGLE_DRIVE_FOLDER_ID",
   "google_drive_is_shared_drive": false,
-  "azure_speaker_key": "YOUR_AZURE_SPEECH_KEY_OR_EMPTY",
-  "azure_speaker_region": "eastus",
   "auto_write_mode": false,
   "silence_threshold_seconds": 1800,
   "poll_interval_minutes": 15,

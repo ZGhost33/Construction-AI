@@ -13,6 +13,7 @@
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
+const { execFileSync } = require('child_process');
 
 const DIR = __dirname;
 const cfg = (() => {
@@ -106,21 +107,26 @@ async function checkNotion() {
   } catch (e) { record('Notion', 'FAIL', e.message); }
 }
 
-async function checkAzure() {
-  const key = cfg.azure_speaker_key;
-  const region = cfg.azure_speaker_region || 'eastus';
-  if (!key || /REPLACE|YOUR_/i.test(key)) return record('Azure Speech', 'SKIP', 'not configured (voice ID disabled)');
+async function checkSpeakerID() {
+  // Speaker identification runs locally via resemblyzer in a dedicated venv
+  // (see pocket-ingest.js / voice-identify.py). This checks the real dependency
+  // — the venv + Python stack — not any cloud service. It's a non-fatal
+  // enhancement: the pipeline degrades to no speaker attribution if absent.
+  const venvPy = '/root/venv-voice/bin/python3';
+  const script = path.join(DIR, 'voice-identify.py');
+  if (!fs.existsSync(script)) return record('Speaker ID', 'SKIP', 'voice-identify.py not present');
+  if (!fs.existsSync(venvPy)) return record('Speaker ID', 'FAIL', `venv missing (${venvPy}) — run provision.sh`);
   try {
-    // Read-only: list speaker-identification profiles.
-    const { status } = await httpsReq({
-      hostname: `${region}.api.cognitive.microsoft.com`,
-      path: '/speaker/identification/v2.0/text-independent/profiles', method: 'GET', timeout: 15000,
-      headers: { 'Ocp-Apim-Subscription-Key': key },
-    });
-    if (status === 200) return record('Azure Speech', 'PASS', `${region} reachable`);
-    if (status === 401 || status === 403) return record('Azure Speech', 'FAIL', `auth rejected (HTTP ${status})`);
-    record('Azure Speech', 'FAIL', `HTTP ${status}`);
-  } catch (e) { record('Azure Speech', 'FAIL', e.message); }
+    // Prove the full stack imports (numpy + resemblyzer/torch + audio libs).
+    execFileSync(venvPy, ['-c', 'import numpy,resemblyzer,soundfile,librosa,torch'], { timeout: 60000, stdio: ['ignore', 'ignore', 'pipe'] });
+    // Prove the script runs and read back enrolled profile count.
+    const out = execFileSync(venvPy, [script, 'list'], { encoding: 'utf8', timeout: 60000, stdio: ['ignore', 'pipe', 'ignore'] });
+    let n = 0; try { n = (JSON.parse(out.trim().split('\n').pop()) || []).length; } catch {}
+    return record('Speaker ID', 'PASS', `resemblyzer venv ready, ${n} profile(s) enrolled`);
+  } catch (e) {
+    const msg = (e.stderr ? e.stderr.toString().trim().split('\n').pop() : e.message) || e.message;
+    return record('Speaker ID', 'FAIL', `venv stack error: ${msg}`.slice(0, 120));
+  }
 }
 
 async function checkTelegram() {
@@ -143,11 +149,11 @@ async function main() {
 
   await Promise.allSettled([
     checkAnthropic(), checkJobber(), checkDrive(), checkCalendar(),
-    checkNotion(), checkAzure(), checkTelegram(),
+    checkNotion(), checkSpeakerID(), checkTelegram(),
   ]);
 
   // Stable order for the table.
-  const order = ['Anthropic', 'Jobber', 'Google Drive', 'Google Calendar', 'Notion', 'Azure Speech', 'Telegram'];
+  const order = ['Anthropic', 'Jobber', 'Google Drive', 'Google Calendar', 'Notion', 'Speaker ID', 'Telegram'];
   results.sort((a, b) => order.indexOf(a.name) - order.indexOf(b.name));
 
   const icon = { PASS: '✓', FAIL: '✖', SKIP: '·' };

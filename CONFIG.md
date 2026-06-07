@@ -29,8 +29,6 @@ is already at the current version is a no-op.
 | `calendar_name` | string | no | `Cruz Schedule` | Exact name of the shared Google Calendar the pipeline writes job events to. The service account must have edit access to a calendar with this name. |
 | `anthropic_api_key` | string | **yes** | — | Claude API key. `loadConfig()` throws if missing or still the placeholder. |
 | `google_drive_root_folder_id` | string | yes (for Drive) | — | Root Drive folder where per-client folders & schedule docs are written. |
-| `azure_speaker_key` | string | no | — | Azure Speech key for speaker identification. If empty/omitted, voice ID is skipped. |
-| `azure_speaker_region` | string | no | `eastus` | Azure Speech region. |
 | `auto_write_mode` | bool | no | `false` | If true, bypasses some manual gating. Keep `false` — the `/review` human gate and `--confirm` previews are the safety model. |
 | `silence_threshold_seconds` | int | no | `1800` | Recording-gap threshold used during ingest. |
 | `poll_interval_minutes` | int | no | `15` | Pipeline poll cadence. |
