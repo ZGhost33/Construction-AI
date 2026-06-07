@@ -1,19 +1,24 @@
 /**
  * voice-identifier.js
  *
- * Speaker identification for Pocket recordings.
+ * Speaker identification for Pocket recordings (local resemblyzer — no cloud key).
  *
  * Flow:
- *   1. Load voice-profiles.json (name → Azure profile ID)
+ *   1. Load voice-profiles.json (enrolled names; embeddings managed by voice-identify.py)
  *   2. For each unique SPEAKER_XX in the recording, extract that speaker's
  *      audio using ffmpeg + Pocket timestamps
- *   3. Submit to Azure for identification
+ *   3. Score it against enrolled embeddings via voice-identify.py (resemblyzer GE2E,
+ *      run in the /root/venv-voice venv)
  *   4. Return a map: { SPEAKER_00: "Luis Cruz", SPEAKER_01: "Brian Harris", ... }
  *
  * Falls back gracefully:
- *   - If no audio file: returns device-owner mapping only (SPEAKER_00 = known person)
- *   - If Azure not configured: returns device-owner mapping only
- *   - If a speaker can't be identified: keeps SPEAKER_XX label
+ *   - device owner is always SPEAKER_00
+ *   - no audio file in inbox: returns device-owner mapping (+ known client in 2-speaker calls)
+ *   - no enrolled profiles: returns device-owner mapping
+ *   - a speaker can't be matched: keeps its SPEAKER_XX label
+ *
+ * NOTE: this module backs the legacy src/pipeline.js plus the voice-cli helpers.
+ * The live ingest path (pocket-ingest.js) calls voice-identify.py directly.
  */
 
 const fs      = require('fs');
@@ -38,16 +43,6 @@ function saveProfiles(profiles) {
   fs.writeFileSync(PROFILES_PATH, JSON.stringify(profiles, null, 2));
 }
 
-function getProfileMap() {
-  // Returns { azureProfileId: name } for reverse lookup
-  const profiles = loadProfiles();
-  const map = {};
-  for (const [name, data] of Object.entries(profiles)) {
-    if (data.profileId) map[data.profileId] = name;
-  }
-  return map;
-}
-
 // ── Audio inbox ───────────────────────────────────────────────────────────────
 // When you download a Pocket recording, drop it in audio-inbox/<recordingId>.<ext>
 // Supported: .m4a .mp3 .wav .mp4 .ogg .flac
@@ -64,7 +59,7 @@ function findAudioFile(recordingId) {
 
 // ── Audio extraction ──────────────────────────────────────────────────────────
 // Extract all segments for a given speaker from the full recording audio.
-// Returns a Buffer of PCM WAV (16kHz mono) — optimal for Azure.
+// Returns a Buffer of PCM WAV (16kHz mono) — the format resemblyzer expects.
 
 function extractSpeakerAudio(audioPath, segments, speakerId) {
   const speakerSegs = segments.filter(s => s.speaker === speakerId && s.end > s.start);
@@ -115,7 +110,7 @@ function extractSpeakerAudio(audioPath, segments, speakerId) {
 
 // ── Main identification ───────────────────────────────────────────────────────
 
-async function identifySpeakers(segments, recordingId, devicePerson, knownClient, azureConfig) {
+async function identifySpeakers(segments, recordingId, devicePerson, knownClient) {
   const speakerMap = {};
 
   // Layer 1: device owner is always SPEAKER_00
@@ -125,25 +120,21 @@ async function identifySpeakers(segments, recordingId, devicePerson, knownClient
 
   const uniqueSpeakers = [...new Set(segments.map(s => s.speaker).filter(Boolean))];
 
-  // If no Azure config, use what we know
-  if (!azureConfig?.key || !azureConfig?.region) {
-    // Layer 2: in a 2-speaker recording, SPEAKER_01 = known client
+  // Layer 2 fallback: in a 2-speaker recording, SPEAKER_01 = known client.
+  // Used whenever we can't run voiceprint identification.
+  const withKnownClient = () => {
     if (knownClient && uniqueSpeakers.length === 2) {
       const other = uniqueSpeakers.find(s => s !== 'SPEAKER_00');
       if (other) speakerMap[other] = knownClient;
     }
     return speakerMap;
-  }
+  };
 
-  // Check if audio file exists in inbox
+  // Voiceprint identification needs the recording audio in the inbox
   const audioPath = findAudioFile(recordingId);
   if (!audioPath) {
     log(`[Voice] No audio file for ${recordingId} — using device/client mapping only`);
-    if (knownClient && uniqueSpeakers.length === 2) {
-      const other = uniqueSpeakers.find(s => s !== 'SPEAKER_00');
-      if (other) speakerMap[other] = knownClient;
-    }
-    return speakerMap;
+    return withKnownClient();
   }
 
   log(`[Voice] Audio found for ${recordingId} — running resemblyzer identification`);
@@ -152,7 +143,7 @@ async function identifySpeakers(segments, recordingId, devicePerson, knownClient
   const profiles = loadProfiles();
   if (Object.keys(profiles).length === 0) {
     log(`[Voice] No enrolled speakers yet — skipping identification`);
-    return speakerMap;
+    return withKnownClient();
   }
 
   // Write segments to temp file for Python script

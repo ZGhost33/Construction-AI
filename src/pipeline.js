@@ -2,7 +2,7 @@ const { fetchRecordings, fetchRecordingDetail, flattenTranscript } = require('./
 const { analyzeTranscript } = require('./claude');
 const { isProcessed, markProcessed } = require('./storage');
 const { getLocation } = require('./location-cache');
-const { addClientToConfig, loadConfig } = require('./config');
+const { addClientToConfig } = require('./config');
 const notion = require('./notion');
 const { writeToJobber } = require('./jobber');
 const { identifySpeakers, applyNamesToTranscript } = require('./voice-identifier');
@@ -65,17 +65,11 @@ async function processBusiness(anthropicApiKey, business, locationTimeoutHours =
       // Speaker identification — try to map SPEAKER_XX to real names
       let transcriptText;
       try {
-        const fullConfig  = loadConfig();
-        const azureConfig = fullConfig.azure_speaker_key ? {
-          key:    fullConfig.azure_speaker_key,
-          region: fullConfig.azure_speaker_region || 'eastus',
-        } : null;
         const speakerMap = await identifySpeakers(
           segments,
           recordingId,
           device.person || null,        // device owner = SPEAKER_00
-          confirmedClient || null,       // known client = likely SPEAKER_01
-          azureConfig
+          confirmedClient || null        // known client = likely SPEAKER_01
         );
         const namedSpeakers = Object.values(speakerMap).filter(v => !v.startsWith('SPEAKER_'));
         if (namedSpeakers.length > 0) {
