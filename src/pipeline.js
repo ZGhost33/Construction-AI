@@ -1,3 +1,12 @@
+/**
+ * ⚠️ LEGACY / DEAD CODE — do not edit for ingest behavior.
+ *
+ * This is the old PM2-managed pipeline (reached only via `npm start`/`npm run dev`
+ * through src/index.js). NO Hermes cron runs it. The live ingest path is the
+ * top-level `pocket-ingest.js`. This module survives only because
+ * src/voice-identifier.js (which it imports) also exports helpers used by
+ * voice-cli.js. See CLAUDE.md → "Live vs. legacy".
+ */
 const { fetchRecordings, fetchRecordingDetail, flattenTranscript } = require('./pocket');
 const { analyzeTranscript } = require('./claude');
 const { isProcessed, markProcessed } = require('./storage');

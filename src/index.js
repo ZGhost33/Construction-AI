@@ -1,3 +1,9 @@
+/**
+ * ⚠️ LEGACY / DEAD CODE — the old PM2 entry point (`npm start`/`npm run dev`).
+ * NO Hermes cron runs this. The live pipeline is the top-level `pocket-ingest.js`
+ * and its sibling cron scripts. Do not edit this to change production behavior.
+ * See CLAUDE.md → "Live vs. legacy".
+ */
 const { loadConfig } = require('./config');
 const { processBusiness } = require('./pipeline');
 const { syncJobberClients } = require('./sync-clients');
