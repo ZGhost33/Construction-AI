@@ -95,62 +95,6 @@ async function main() {
       break;
     }
 
-    // ── test ────────────────────────────────────────────────────────────────
-    // Test identification: provide a recording ID + audio file,
-    // shows who each SPEAKER_XX was identified as
-    case 'test': {
-      const recordingId = args[0];
-      const audioPath   = args[1];
-      if (!recordingId || !audioPath) {
-        console.error('Usage: node voice-cli.js test <recording-id> /path/to/audio.m4a');
-        process.exit(1);
-      }
-      if (!fs.existsSync(audioPath)) {
-        console.error(`ERROR: Audio file not found: ${audioPath}`);
-        process.exit(1);
-      }
-
-      const { key, region }  = getAzureConfig();
-      const profiles          = loadProfiles();
-      const allIds            = Object.values(profiles).map(p => p.profileId).filter(Boolean);
-      const profileMap        = {};
-      for (const [name, data] of Object.entries(profiles)) {
-        if (data.profileId) profileMap[data.profileId] = name;
-      }
-
-      const { fetchRecordingDetail } = require('./src/pocket');
-      const config = loadConfig();
-      const b      = config.businesses[0];
-      const device = b.pocket_devices?.[0] || { api_key: b.pocket_api_key };
-
-      console.log(`Fetching transcript for recording ${recordingId}...`);
-      const detail   = await fetchRecordingDetail(device.api_key, recordingId);
-      const segments = detail.transcript?.segments || detail.segments || [];
-
-      const speakers = [...new Set(segments.map(s => s.speaker).filter(Boolean))];
-      console.log(`\nSpeakers in recording: ${speakers.join(', ')}`);
-      console.log(`Enrolled profiles: ${Object.keys(profiles).join(', ') || 'none'}\n`);
-
-      const { extractSpeakerAudio } = require('./src/voice-identifier');
-
-      for (const speakerId of speakers) {
-        process.stdout.write(`Identifying ${speakerId}... `);
-        const buf = extractSpeakerAudio(audioPath, segments, speakerId);
-        if (!buf) { console.log('not enough audio'); continue; }
-
-        const secs = segments.filter(s => s.speaker === speakerId)
-                             .reduce((t, s) => t + (s.end - s.start), 0);
-        const result = await azure.identifyAudio(key, region, buf, allIds);
-        const name   = result ? profileMap[result.profileId] : null;
-        console.log(name
-          ? `✓ ${name} (${result.confidence}confidence, ${secs.toFixed(1)}s speech)`
-          : `? Unidentified (${secs.toFixed(1)}s speech)`
-        );
-      }
-      console.log('');
-      break;
-    }
-
     // ── add-audio ───────────────────────────────────────────────────────────
     // Copy an audio file into the inbox for a specific recording ID
     case 'add-audio': {
@@ -197,7 +141,6 @@ Commands:
   list                                Show all enrolled profiles
   status "Name"                       Check enrollment status for a person
   delete "Name"                       Remove a voice profile
-  test <rec-id> /path/to/audio.m4a   Test identification on a recording
   add-audio <rec-id> /path/to/audio  Add recording audio to inbox for auto-ID
   inbox                               Show pending audio files in inbox
 
