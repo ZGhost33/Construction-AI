@@ -103,18 +103,48 @@ async function sendTelegramDigest(botToken, chatId, items) {
 
   lines.push('');
   const totalPending = pending.length;
-  lines.push(`*Total pending: ${totalPending}* — send /review to clear the queue`);
+  lines.push(`*Total pending: ${totalPending}* — tap a button below, or send /review`);
 
   const text = lines.join('\n');
+
+  // ── Inline action buttons (one row per item, up to 8) ───────────────────────
+  // Tapping fires a `rq:` callback consumed by the `review-buttons` Hermes plugin
+  // (~/.hermes/plugins/review-buttons), which shells out to review-cli.js. If that
+  // plugin is not installed, the buttons are simply inert — the /review text flow
+  // still works. callback_data stays well under Telegram's 64-byte cap
+  // (`rq:approve:rq_xxxxxxxxxxxx` ≈ 26 B).
+  const reply_markup = buildReviewKeyboard(items);
+
   try {
     await axios.post(`https://api.telegram.org/bot${botToken}/sendMessage`, {
       chat_id: chatId,
       text,
       parse_mode: 'Markdown',
+      ...(reply_markup ? { reply_markup } : {}),
     }, { timeout: 10000 });
   } catch (err) {
     log('[Ingest] Telegram digest failed: ' + err.message);
   }
+}
+
+// Build an inline keyboard: one row per item (capped), each row
+// `[👁 Show] [✅ Approve <client>] [🗑 Dismiss]`, keyed by the item's rq_ id.
+// Returns undefined when there are no id-bearing items (no markup attached).
+function buildReviewKeyboard(items) {
+  const withId = (items || []).filter(it => it && it.id);
+  if (!withId.length) return undefined;
+  const MAX_ROWS = 8;
+  const rows = withId.slice(0, MAX_ROWS).map(it => {
+    const client = (it.proposed_client && it.proposed_client !== 'UNKNOWN')
+      ? it.proposed_client : 'unknown';
+    const label = client.length > 18 ? client.slice(0, 17) + '…' : client;
+    return [
+      { text: '👁', callback_data: `rq:show:${it.id}` },
+      { text: `✅ ${label}`, callback_data: `rq:approve:${it.id}` },
+      { text: '🗑', callback_data: `rq:dismiss:${it.id}` },
+    ];
+  });
+  return { inline_keyboard: rows };
 }
 
 // ── Voice identification ──────────────────────────────────────────────────────

@@ -1,0 +1,11 @@
+name: review-buttons
+version: 1.0.0
+description: >-
+  Inline Telegram buttons for the Pocket review queue. Wraps the gateway's
+  Telegram callback dispatch to handle `rq:` callbacks (show / approve /
+  dismiss) emitted by construction-bi-pipeline's review digest, shelling out
+  to review-cli.js. Approve is two-tap (confirm) because it is a live Jobber
+  write. Lives outside the vendored hermes-agent tree so it survives package
+  upgrades; the wrap re-applies on every gateway start.
+author: construction-bi-pipeline
+hooks: []
