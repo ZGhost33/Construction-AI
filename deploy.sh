@@ -97,6 +97,9 @@ RSYNC_EXCLUDES=(
   --exclude 'recall-index.json'
   --exclude 'capture-queue.json'
   --exclude 'capture-inbox'
+  --exclude 'ui-metrics.json'
+  --exclude 'leaderboard-archive.json'
+  --exclude 'contacts.json'
   --exclude 'deployments.json'
   --exclude 'PIPELINE_CONTEXT.md'
 )

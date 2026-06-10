@@ -16,8 +16,14 @@
       "name": "Your Business Name LLC",
       "pocket_api_key": "pk_YOUR_PRIMARY_POCKET_KEY",
       "pocket_devices": [
-        { "api_key": "pk_DEVICE_1_KEY", "person": "Person 1" },
-        { "api_key": "pk_DEVICE_2_KEY", "person": "Person 2" }
+        {
+          "api_key": "pk_DEVICE_1_KEY",
+          "person": "Person 1"
+        },
+        {
+          "api_key": "pk_DEVICE_2_KEY",
+          "person": "Person 2"
+        }
       ],
       "notion_token": "ntn_YOUR_NOTION_INTEGRATION_TOKEN",
       "jobber": {
@@ -40,14 +46,48 @@
         {
           "name": "Client With Keywords",
           "address": "456 Street, City ST",
-          "keywords": ["Nickname", "LastName"]
+          "keywords": [
+            "Nickname",
+            "LastName"
+          ]
         }
       ],
       "people": [
-        { "name": "Owner", "role": "general contractor, always present" },
-        { "name": "Manager", "role": "general manager" },
-        { "name": "Supervisor", "role": "field supervisor" }
-      ]
+        {
+          "name": "Owner",
+          "role": "general contractor, always present"
+        },
+        {
+          "name": "Manager",
+          "role": "general manager"
+        },
+        {
+          "name": "Supervisor",
+          "role": "field supervisor"
+        }
+      ],
+      "email": {
+        "senders": {
+          "george": "george@yourdomain.com",
+          "danilo": "danilo@yourdomain.com"
+        },
+        "default_sender": "george"
+      },
+      "telegram_ui": {
+        "review": {
+          "default_filter": "a"
+        },
+        "tasks": {
+          "default_filter": "a"
+        },
+        "leaderboard": {
+          "operators": [
+            "Owner",
+            "Manager",
+            "Supervisor"
+          ]
+        }
+      }
     }
   ]
 }

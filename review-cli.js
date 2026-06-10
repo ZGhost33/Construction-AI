@@ -344,6 +344,232 @@ function cmdDismiss(ref, flags) {
   console.log(`🗑️ Dismissed item ${it.id} (${it.proposed_client || 'unknown'})${flags.reason ? ' — ' + flags.reason : ''}. Not written to Jobber.`);
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Card cycler — emits JSON render payloads consumed by the `review-buttons`
+// Hermes plugin, which applies them in place (editMessageText). All Jobber
+// writes still flow through approve/dismiss; these commands only render/navigate
+// and mutate LOCAL queue fields (proposed_client / speaker / note overrides).
+// Stateless: the active filter rides in callback_data as a 1-char code.
+// ─────────────────────────────────────────────────────────────────────────────
+const METRICS = path.join(DIR, 'ui-metrics.json');
+const FILTERS = { a: 'all', u: 'unknown', l: 'lowconf' };
+const FILTER_LABELS = { a: 'all', u: 'unknown client', l: 'low confidence' };
+function fcode(c) { return FILTERS[c] ? c : 'a'; }
+// config-driven default filter: businesses[0].telegram_ui.review.default_filter
+function defaultFilter() {
+  try {
+    const c = JSON.parse(fs.readFileSync(CONFIG, 'utf8'));
+    return fcode((((c.businesses[0] || {}).telegram_ui || {}).review || {}).default_filter);
+  } catch { return 'a'; }
+}
+function outJSON(o) { process.stdout.write(JSON.stringify(o) + '\n'); }
+
+// strip legacy-Markdown-significant chars from dynamic text so a stray `_`/`*`/`[`
+// in a transcript can never break Telegram's Markdown parse.
+function clean(s, max) {
+  let t = String(s == null ? '' : s).replace(/[`*_\[\]]/g, '').replace(/\s+/g, ' ').trim();
+  if (max && t.length > max) t = t.slice(0, max - 1).trimEnd() + '…';
+  return t;
+}
+function today() { return new Date().toISOString().slice(0, 10); }
+
+function matchesFilter(it, code) {
+  if (code === 'u') return !it.proposed_client || it.proposed_client === 'UNKNOWN' || it.needs_routing;
+  if (code === 'l') return it.confidence && String(it.confidence).toLowerCase() !== 'high';
+  return true; // 'a' = all
+}
+function filteredPending(q, code) { return pendingItems(q).filter(it => matchesFilter(it, code)); }
+
+function speakerLabel(it) {
+  if (it.proposed_speaker) return clean(it.proposed_speaker, 40);
+  const v = (it.signals || {}).voice;
+  if (v && typeof v === 'object') {
+    if (v.name) return `${clean(v.name, 30)}${v.confidence != null ? ` (${Math.round(v.confidence)}%)` : ''}`;
+    const names = Object.values(v).filter(x => typeof x === 'string');
+    if (names.length) return clean(names.join(', '), 40);
+  }
+  return null;
+}
+
+function cardText(it, i, n, code) {
+  const L = [];
+  L.push(`*Review ${i + 1} of ${n}*${code !== 'a' ? ` · _${FILTER_LABELS[code]}_` : ''}`);
+  const src = it.device_person || (it.source === 'field_capture' ? 'field capture' : (it.source || 'recording'));
+  const date = String(it.recording_date || it.created_at || '').slice(0, 10) || '?';
+  L.push(`🎙 ${clean(src, 30)} · ${date}`);
+  L.push(`Confidence: ${clean(it.confidence || '?', 12)} · bucket: ${clean(String(it.bucket || '?').replace(/_/g, ' '), 16)}`);
+  const sig = it.signals || {};
+  L.push(`Signals: device ${clean(sig.device || '—', 16)} · content ${clean(sig.content || '—', 16)}${sig.content_confidence ? ` (${clean(sig.content_confidence, 8)})` : ''} · voice ${sig.voice ? '✓' : '—'}`);
+  const snip = clean(it.transcript_snippet || it.analysis_summary || '', 240);
+  if (snip) { L.push(''); L.push(`“${snip}”`); }
+  L.push('');
+  const pc = it.proposed_client && it.proposed_client !== 'UNKNOWN' ? it.proposed_client : 'UNKNOWN';
+  L.push(`Suggested client: *${clean(pc, 40)}* (${rosterStatus(it.proposed_client || '')})${it.client_overridden ? ' _(corrected)_' : ''}`);
+  const sp = speakerLabel(it);
+  if (sp) L.push(`Speaker: ${sp}${it.speaker_overridden ? ' _(corrected)_' : ''}`);
+  if (it.proposed_job) L.push(`Job: ${clean(it.proposed_job, 40)}`);
+  if (it.proposed_expense && it.proposed_expense.amount != null) {
+    L.push(`💵 $${Number(it.proposed_expense.amount).toFixed(2)} _(auto-read — confirm on approve)_`);
+  }
+  return L.join('\n');
+}
+
+function navRow(it, i, n, code) {
+  return [
+    { text: i > 0 ? '◀' : '·', callback_data: i > 0 ? `rq:prev:${code}:${it.id}` : 'rq:noop' },
+    { text: `${i + 1}/${n}`, callback_data: 'rq:noop' },
+    { text: i < n - 1 ? '▶' : '·', callback_data: i < n - 1 ? `rq:next:${code}:${it.id}` : 'rq:noop' },
+  ];
+}
+function cardKeyboard(it, i, n, code) {
+  return { inline_keyboard: [
+    [
+      { text: '✅ Approve', callback_data: `rq:approve:${code}:${it.id}` },
+      { text: '❌ Dismiss', callback_data: `rq:dismiss:${code}:${it.id}` },
+      { text: '⏭ Skip', callback_data: `rq:skip:${code}:${it.id}` },
+    ],
+    [
+      { text: '✏️ Update', callback_data: `rq:upd:${code}:${it.id}` },
+      { text: '🔽 Filter', callback_data: `rq:flt:${code}:${it.id}` },
+    ],
+    navRow(it, i, n, code),
+  ] };
+}
+
+function emptyPayload(q, code) {
+  const a = q.filter(x => x.status === 'approved' && String(x.approved_at || '').slice(0, 10) === today()).length;
+  const d = q.filter(x => x.status === 'dismissed' && String(x.dismissed_at || '').slice(0, 10) === today()).length;
+  return { ok: true, empty: true, parse_mode: 'Markdown', reply_markup: null,
+    text: `🎉 *Queue clear.* ${a} approved, ${d} dismissed today.` };
+}
+
+// Resolve which card to render from (--at, --move). Handles an `at` whose item
+// was just acted on / filtered out by advancing to the next item by time order.
+function cardPayload(at, move, code) {
+  code = fcode(code);
+  const q = loadQueue();
+  const list = filteredPending(q, code);
+  if (!list.length) return emptyPayload(q, code);
+  let idx, answer = null;
+  if (!at || at === 'first') idx = 0;
+  else {
+    let pos = list.findIndex(x => x.id === at);
+    if (pos < 0) {
+      // item gone from the filtered set → land on the next item by created_at
+      const orig = q.find(x => x.id === at);
+      const after = orig ? list.findIndex(x => String(x.created_at || '') > String(orig.created_at || '')) : -1;
+      idx = after >= 0 ? after : Math.max(0, list.length - 1);
+      move = 'here';
+    } else idx = pos;
+  }
+  if (move === 'next') { if (idx < list.length - 1) idx++; else answer = 'End of queue.'; }
+  else if (move === 'prev') { if (idx > 0) idx--; else answer = 'Start of queue.'; }
+  const it = list[idx];
+  const pay = { ok: true, empty: false, parse_mode: 'Markdown', id: it.id,
+    text: cardText(it, idx, list.length, code), reply_markup: cardKeyboard(it, idx, list.length, code) };
+  if (answer) pay.answer = answer;
+  return pay;
+}
+
+// Two-tap approve, in place: render the card text + a Confirm/Cancel keyboard.
+// Confirm (rq:aok) runs the live Jobber write in the plugin and then advances
+// the card; Cancel (rq:card) just re-renders the card. If the item already left
+// the filtered set (e.g. double-tap), fall back to the normal card render.
+function approvePromptPayload(id, code) {
+  code = fcode(code);
+  const q = loadQueue();
+  const list = filteredPending(q, code);
+  const idx = list.findIndex(x => x.id === id);
+  if (idx < 0) return cardPayload(id, 'here', code);
+  const it = list[idx];
+  const exp = it.proposed_expense && it.proposed_expense.amount != null
+    ? ` and logs the $${Number(it.proposed_expense.amount).toFixed(2)} expense`
+    : '';
+  return { ok: true, parse_mode: 'Markdown', id: it.id,
+    text: cardText(it, idx, list.length, code) + `\n\n⚠️ *Approve?* This posts the note to Jobber${exp}.`,
+    reply_markup: { inline_keyboard: [[
+      { text: '✅ Confirm', callback_data: `rq:aok:${code}:${it.id}` },
+      { text: '✖ Cancel', callback_data: `rq:card:${code}:${it.id}` },
+    ]] } };
+}
+
+function filterMenuPayload(id, code) {
+  code = fcode(code);
+  const opt = (lbl, c) => ([{ text: (c === code ? '● ' : '') + lbl, callback_data: `rq:setf:${c}:${id}` }]);
+  return { ok: true, parse_mode: 'Markdown', text: '*Filter queue:*', reply_markup: { inline_keyboard: [
+    opt('All', 'a'), opt('Unknown client', 'u'), opt('Low confidence', 'l'),
+    [{ text: '⬅ Back', callback_data: `rq:card:${code}:${id}` }],
+  ] } };
+}
+
+function updateMenuPayload(id, code) {
+  code = fcode(code);
+  return { ok: true, parse_mode: 'Markdown', text: '*What needs fixing?*', reply_markup: { inline_keyboard: [
+    [{ text: '🏠 Wrong client', callback_data: `rq:uc:${code}:${id}` }],
+    [{ text: '🎙 Wrong speaker', callback_data: `rq:us:${code}:${id}` }],
+    [{ text: '📝 Add a note', callback_data: `rq:un:${code}:${id}` }],
+    [{ text: '⬅ Back', callback_data: `rq:card:${code}:${id}` }],
+  ] } };
+}
+
+function pickerPayload(kind, id, code, page) {
+  code = fcode(code);
+  const list = kind === 'client' ? clientList() : peopleList();
+  const PER = 8;
+  const pages = Math.max(1, Math.ceil(list.length / PER));
+  const p = Math.min(Math.max(0, parseInt(page, 10) || 0), pages - 1);
+  const slice = list.slice(p * PER, p * PER + PER);
+  const sel = kind === 'client' ? 'xc' : 'xs';
+  const nav = kind === 'client' ? 'pc' : 'ps';
+  const rows = [];
+  for (let i = 0; i < slice.length; i += 2) {
+    rows.push(slice.slice(i, i + 2).map(c => ({ text: clean(c.name, 24), callback_data: `rq:${sel}:${code}:${list.indexOf(c)}:${id}` })));
+  }
+  const navrow = [];
+  if (p > 0) navrow.push({ text: '◀', callback_data: `rq:${nav}:${code}:${p - 1}:${id}` });
+  navrow.push({ text: '⬅ Back', callback_data: `rq:upd:${code}:${id}` });
+  if (p < pages - 1) navrow.push({ text: '▶', callback_data: `rq:${nav}:${code}:${p + 1}:${id}` });
+  rows.push(navrow);
+  const title = kind === 'client'
+    ? 'Pick the correct *client*:\n_(Watch: Lisa & Joe Gallan vs. Jesse & Eva Gallan.)_'
+    : 'Pick the correct *speaker*:';
+  return { ok: true, parse_mode: 'Markdown', text: title, reply_markup: { inline_keyboard: rows } };
+}
+
+function cmdUpdate(flags) {
+  const q = loadQueue();
+  const idx = resolveIndex(q, flags.id);
+  if (idx === null) { outJSON({ ok: false, parse_mode: 'Markdown', text: '❌ Item no longer pending.', answer: 'Item not found' }); return; }
+  const it = q[idx];
+  const code = fcode(flags.f);
+  let answer = null;
+  if (flags.client != null) {
+    const c = clientList()[parseInt(flags.client, 10)];
+    if (c) { it.proposed_client = c.name; it.needs_routing = false; it.client_overridden = true; answer = `Client → ${c.name}`; }
+  } else if (flags.speaker != null) {
+    const p = peopleList()[parseInt(flags.speaker, 10)];
+    if (p) { it.proposed_speaker = p.name; it.speaker_overridden = true; answer = `Speaker → ${p.name}`; }
+  } else if (flags.note != null) {
+    const txt = String(flags.note).trim();
+    if (txt) {
+      it.proposed_note = (it.proposed_note ? it.proposed_note + '\n\n' : '') + `[Office note] ${txt}`;
+      (it.office_notes = it.office_notes || []).push(txt);
+      answer = 'Note added';
+    }
+  }
+  saveQueue(q);
+  const pay = cardPayload(it.id, 'here', code);
+  if (answer) pay.answer = answer;
+  outJSON(pay);
+}
+
+function cmdMetric(flags) {
+  let m; try { m = JSON.parse(fs.readFileSync(METRICS, 'utf8')); } catch { m = {}; }
+  const key = flags._[0];
+  if (key) { const k = `${key}:${flags.op || 'unknown'}`; m[k] = (m[k] || 0) + 1; try { fs.writeFileSync(METRICS, JSON.stringify(m, null, 2)); } catch {} }
+  outJSON({ ok: true });
+}
+
 // ── module export (for unit testing the parser without running the CLI) ───────
 if (require.main !== module) {
   module.exports = { parseCommitmentsSection, resolvePersonLenient, extractCommitmentsFromNote, norm };
@@ -359,6 +585,14 @@ switch (cmd) {
   case 'show': if (!ref) { console.log('usage: review-cli.js show <n|rq_id>'); process.exit(1); } cmdShow(ref); break;
   case 'approve': if (!ref) { console.log('usage: review-cli.js approve <n|rq_id> [--client ..] [--job N] [--note ..] [--dry-run]'); process.exit(1); } cmdApprove(ref, flags); break;
   case 'dismiss': if (!ref) { console.log('usage: review-cli.js dismiss <n|rq_id> [--reason ..]'); process.exit(1); } cmdDismiss(ref, flags); break;
+  // ── card cycler (JSON out; consumed by the review-buttons plugin) ──────────
+  case 'card': outJSON(cardPayload(flags.at || 'first', flags.move || 'here', flags.f || defaultFilter())); break;
+  case 'approve-prompt': outJSON(approvePromptPayload(flags.id, flags.f)); break;
+  case 'filter-menu': outJSON(filterMenuPayload(flags.id, flags.f)); break;
+  case 'update-menu': outJSON(updateMenuPayload(flags.id, flags.f)); break;
+  case 'picker': outJSON(pickerPayload(flags.kind === 'speaker' ? 'speaker' : 'client', flags.id, flags.f, flags.page)); break;
+  case 'update': cmdUpdate(flags); break;
+  case 'metric': cmdMetric(flags); break;
   default:
     console.log('review-cli.js — Pocket review queue\n  list\n  show <n|rq_id>\n  approve <n|rq_id> [--client "Name"] [--job N] [--note "text"] [--dry-run]\n  dismiss <n|rq_id> [--reason "why"]');
     process.exit(cmd ? 1 : 0);

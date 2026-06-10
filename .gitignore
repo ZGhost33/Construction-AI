@@ -14,6 +14,7 @@ ingest-attempts.json
 location-cache.json
 client-scopes.json
 converted-quotes.json
+ui-metrics.json
 
 # Client data / operational state — contains client PII, never commit
 job-plans.json
@@ -25,6 +26,8 @@ expenses.json
 receipts.json
 recall-index.json
 capture-queue.json
+leaderboard-archive.json
+contacts.json
 
 # Dependencies
 node_modules/

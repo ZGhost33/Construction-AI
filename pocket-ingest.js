@@ -144,6 +144,11 @@ function buildReviewKeyboard(items) {
       { text: '🗑', callback_data: `rq:dismiss:${it.id}` },
     ];
   });
+  // Opt-in entry to the card cycler. Tapping `rq:card:a:<firstId>` transforms
+  // THIS digest message into the first review card in place (the `review-buttons`
+  // plugin renders it). The per-item rows above remain the proven fallback, so
+  // the old digest path is untouched if the plugin isn't installed.
+  rows.unshift([{ text: '📋 Review as cards →', callback_data: `rq:card:a:${withId[0].id}` }]);
   return { inline_keyboard: rows };
 }
 
