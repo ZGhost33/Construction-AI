@@ -38,16 +38,19 @@ COMMIT_CLI = REPO_DIR + "/commit-cli.js"
 STATUS_CLI = REPO_DIR + "/status-cli.js"
 GMAIL_CLI = REPO_DIR + "/gmail-cli.js"
 CLIENT_CLI = REPO_DIR + "/client-cli.js"
+INFERENCE_CLI = REPO_DIR + "/inference-cli.js"
 MENU_MANIFEST = REPO_DIR + "/telegram-menu.json"
 
 # Map a manifest cli filename to its absolute path (single source of truth for
-# both menu dispatch and the smoke-test parity check).
+# both menu dispatch and the smoke-test parity check). Every cli referenced by
+# telegram-menu.json must appear here, or its command renders "Couldn't render".
 _CLI_BY_FILE = {
     "review-cli.js": REVIEW_CLI,
     "commit-cli.js": COMMIT_CLI,
     "status-cli.js": STATUS_CLI,
     "gmail-cli.js": GMAIL_CLI,
     "client-cli.js": CLIENT_CLI,
+    "inference-cli.js": INFERENCE_CLI,
 }
 
 _VALID_ID_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")
