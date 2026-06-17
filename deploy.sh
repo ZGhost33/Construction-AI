@@ -100,6 +100,7 @@ RSYNC_EXCLUDES=(
   --exclude 'ui-metrics.json'
   --exclude 'leaderboard-archive.json'
   --exclude 'contacts.json'
+  --exclude 'new-client-drafts.json'
   --exclude 'deployments.json'
   --exclude 'PIPELINE_CONTEXT.md'
 )

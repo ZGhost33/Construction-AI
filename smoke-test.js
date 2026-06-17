@@ -143,17 +143,52 @@ async function checkTelegram() {
   } catch (e) { record('Telegram', 'FAIL', e.message); }
 }
 
+// Menu→handler parity: every command in the Telegram menu manifest must have a
+// reachable handler. For each command we resolve its probe (a render handler IS
+// its own read-only probe; a prompt handler declares a dedicated probe) and run
+// it — a valid {ok:true} payload proves the handler is wired. Prevents a command
+// being registered for autocomplete but dead in the dispatcher.
+async function checkMenuParity() {
+  const manifestPath = path.join(DIR, 'telegram-menu.json');
+  let manifest;
+  try { manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')); }
+  catch { return record('Menu parity', 'SKIP', 'telegram-menu.json not present'); }
+  const cmds = manifest.commands || [];
+  if (!cmds.length) return record('Menu parity', 'FAIL', 'manifest has no commands');
+
+  const broken = [];
+  for (const c of cmds) {
+    const h = c.handler || {};
+    const probe = h.type === 'render' ? { cli: h.cli, args: h.args || [] } : h.probe;
+    if (!c.cmd || !c.desc) { broken.push(`${c.cmd || '?'}(missing cmd/desc)`); continue; }
+    if (!probe || !probe.cli) { broken.push(`${c.cmd}(no handler)`); continue; }
+    const cliPath = path.join(DIR, probe.cli);
+    if (!fs.existsSync(cliPath)) { broken.push(`${c.cmd}(missing ${probe.cli})`); continue; }
+    try {
+      const out = execFileSync(process.execPath, [cliPath, ...(probe.args || [])],
+        { encoding: 'utf8', timeout: 30000, stdio: ['pipe', 'pipe', 'pipe'] });
+      const line = out.trim().split('\n').filter(Boolean).pop() || '';
+      const j = JSON.parse(line);
+      if (j.ok !== true) broken.push(`${c.cmd}(handler returned ok=${j.ok})`);
+    } catch (e) {
+      broken.push(`${c.cmd}(${(e.message || 'error').slice(0, 40)})`);
+    }
+  }
+  if (broken.length) return record('Menu parity', 'FAIL', `${cmds.length - broken.length}/${cmds.length} wired · broken: ${broken.join(', ')}`);
+  record('Menu parity', 'PASS', `${cmds.length} commands, all handlers reachable`);
+}
+
 async function main() {
   console.log(`\n=== smoke-test (read-only) — ${SET.businessName || 'deployment'} — ${new Date().toISOString()} ===`);
   console.log(`timezone=${TZ}  calendar="${CAL_NAME}"\n`);
 
   await Promise.allSettled([
     checkAnthropic(), checkJobber(), checkDrive(), checkCalendar(),
-    checkNotion(), checkSpeakerID(), checkTelegram(),
+    checkNotion(), checkSpeakerID(), checkTelegram(), checkMenuParity(),
   ]);
 
   // Stable order for the table.
-  const order = ['Anthropic', 'Jobber', 'Google Drive', 'Google Calendar', 'Notion', 'Speaker ID', 'Telegram'];
+  const order = ['Anthropic', 'Jobber', 'Google Drive', 'Google Calendar', 'Notion', 'Speaker ID', 'Telegram', 'Menu parity'];
   results.sort((a, b) => order.indexOf(a.name) - order.indexOf(b.name));
 
   const icon = { PASS: '✓', FAIL: '✖', SKIP: '·' };

@@ -13,20 +13,22 @@
 // registered here — they stay typeable but out of the menu, per the UX brief.
 // Run once after deploy (idempotent): node telegram-menu.js [--env PATH]
 //
+// The command list comes from telegram-menu.json — the SINGLE source of truth
+// shared with the review-buttons plugin (dispatch) and smoke-test.js (parity).
 // The only write is Telegram's own setMyCommands for this bot.
 
 const fs = require('fs');
+const path = require('path');
 const axios = require('axios');
 
 const DEFAULT_ENV = '/root/.hermes/profiles/z/.env';
+const MANIFEST = path.join(__dirname, 'telegram-menu.json');
 
-const COMMANDS = [
-  { command: 'review', description: '📋 Review queue — work through pending cards' },
-  { command: 'tasks', description: '✅ Tasks — open, register, leaderboard' },
-  { command: 'newclient', description: '➕ New client — guided create (you confirm)' },
-  { command: 'status', description: '🔍 Status — queue depth, tasks, last ingest' },
-  { command: 'today', description: '📅 Today — due and overdue tasks' },
-];
+function loadCommands() {
+  const m = JSON.parse(fs.readFileSync(MANIFEST, 'utf8'));
+  return (m.commands || []).map(c => ({ command: c.cmd, description: c.desc }));
+}
+const COMMANDS = loadCommands();
 
 async function main() {
   const args = process.argv.slice(2);

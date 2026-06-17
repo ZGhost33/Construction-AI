@@ -32,10 +32,23 @@ logger = logging.getLogger("hermes.plugins.review-buttons")
 
 # Matches the /review skill's hardcoded invocation.
 NODE_BIN = "/root/.hermes/node/bin/node"
-REVIEW_CLI = "/root/construction-bi-pipeline/review-cli.js"
-COMMIT_CLI = "/root/construction-bi-pipeline/commit-cli.js"
-STATUS_CLI = "/root/construction-bi-pipeline/status-cli.js"
-GMAIL_CLI = "/root/construction-bi-pipeline/gmail-cli.js"
+REPO_DIR = "/root/construction-bi-pipeline"
+REVIEW_CLI = REPO_DIR + "/review-cli.js"
+COMMIT_CLI = REPO_DIR + "/commit-cli.js"
+STATUS_CLI = REPO_DIR + "/status-cli.js"
+GMAIL_CLI = REPO_DIR + "/gmail-cli.js"
+CLIENT_CLI = REPO_DIR + "/client-cli.js"
+MENU_MANIFEST = REPO_DIR + "/telegram-menu.json"
+
+# Map a manifest cli filename to its absolute path (single source of truth for
+# both menu dispatch and the smoke-test parity check).
+_CLI_BY_FILE = {
+    "review-cli.js": REVIEW_CLI,
+    "commit-cli.js": COMMIT_CLI,
+    "status-cli.js": STATUS_CLI,
+    "gmail-cli.js": GMAIL_CLI,
+    "client-cli.js": CLIENT_CLI,
+}
 
 _VALID_ID_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")
 _VALID_FILTER = {"a", "u", "l"}  # card-cycler filter codes (all / unknown / low-conf)
@@ -120,6 +133,31 @@ async def _status_cli_json(args: list):
 
 async def _gmail_cli_json(args: list):
     return await asyncio.to_thread(_run_cli_json, GMAIL_CLI, args)
+
+
+async def _client_cli_json(args: list):
+    return await asyncio.to_thread(_run_cli_json, CLIENT_CLI, args)
+
+
+# ── bot-menu manifest (single source of truth, shared with telegram-menu.js) ──
+_MENU_FALLBACK = [
+    {"cmd": "review", "desc": "📋 Review queue", "handler": {"type": "render", "cli": "review-cli.js", "args": ["card", "--at", "first", "--f", "a"]}},
+    {"cmd": "tasks", "desc": "✅ Tasks", "handler": {"type": "render", "cli": "commit-cli.js", "args": ["home"]}},
+    {"cmd": "status", "desc": "🔍 Status", "handler": {"type": "render", "cli": "status-cli.js", "args": ["status"]}},
+    {"cmd": "today", "desc": "📅 Today", "handler": {"type": "render", "cli": "status-cli.js", "args": ["today"]}},
+]
+
+
+def _load_menu():
+    """Read the menu manifest → list of command dicts. Falls back to a built-in
+    list if the file is missing/unreadable so the bot never loses its menu."""
+    try:
+        with open(MENU_MANIFEST, "r", encoding="utf-8") as fh:
+            cmds = json.load(fh).get("commands", [])
+        return cmds if cmds else _MENU_FALLBACK
+    except Exception:
+        logger.debug("review-buttons: menu manifest unreadable; using fallback")
+        return _MENU_FALLBACK
 
 
 def _kbd(reply_markup):
@@ -566,6 +604,10 @@ async def _handle_note_reply(adapter, update) -> bool:
     if kind == "email_edit":
         payload = await _gmail_cli_json(["task-draft-set", "--id", pend.get("id"), "--op", op, "--text", text, "--f", code])
         confirm_text = "✏️ Draft updated."
+    elif kind == "newclient":
+        # /newclient reply: parse into a confirmation card (no write yet).
+        payload = await _client_cli_json(["preview", "--text", text, "--op", op])
+        confirm_text = "➕ Review and confirm below."
     else:
         rq_id = pend.get("rq_id")
         payload = await _review_cli_json(["update", "--id", rq_id, "--note", text, "--f", code])
@@ -600,6 +642,55 @@ async def _handle_note_reply(adapter, update) -> bool:
     return True
 
 
+def _valid_nc_id(s) -> bool:
+    """nc_<8 hex> — defensively reject anything else."""
+    return (isinstance(s, str) and s.startswith("nc_") and 4 <= len(s) <= 24
+            and all(c in _VALID_ID_CHARS for c in s))
+
+
+async def _handle_newclient_callback(adapter, query, data: str) -> None:
+    """Route an ``nc:`` callback (New Client guided create).
+
+    Verbs:
+      nc:cancel:<id>   — abandon the draft
+      nc:create:<id>   — confirmed: atomic create (Jobber → Drive folder)
+      nc:foldr:<id>    — retry the Drive folder after a partial create
+    """
+    parts = data.split(":")
+    verb = parts[1] if len(parts) > 1 else ""
+    nc_id = parts[-1] if parts else ""
+
+    if verb == "cancel":
+        await query.answer(text="Cancelled")
+        try:
+            await query.edit_message_text(text="➕ New client — cancelled.")
+        except Exception:
+            pass
+        return
+
+    if not _valid_nc_id(nc_id):
+        await query.answer(text="Invalid draft id.")
+        return
+
+    authorized, op = _authorize(adapter, query)
+    if not authorized:
+        await query.answer(text="⛔ Not authorized.")
+        return
+
+    if verb == "create":
+        await query.answer(text="Creating…")
+        payload = await _client_cli_json(["create", "--id", nc_id, "--op", op])
+        await _apply_edit(query, payload or {"text": "Couldn't render — try again."})
+        return
+    if verb == "foldr":
+        await query.answer(text="Retrying folder…")
+        payload = await _client_cli_json(["retry-folder", "--id", nc_id, "--op", op])
+        await _apply_edit(query, payload or {"text": "Couldn't render — try again."})
+        return
+
+    await query.answer(text="Unknown action.")
+
+
 def _authorize_msg(adapter, msg) -> bool:
     """Authorize a plain message's author via the gateway's callback check
     (same policy surface as button taps)."""
@@ -619,22 +710,42 @@ def _authorize_msg(adapter, msg) -> bool:
         return False
 
 
-# Bot-menu work commands handled directly (no agent round-trip). Everything
-# else — including /newclient (agent-led guided create) and all session
-# plumbing commands — falls through to the original handler untouched.
-_MENU_COMMANDS = {"review", "tasks", "status", "today"}
+# Bot-menu commands handled directly (no agent round-trip), built from the
+# manifest. 'render' = run cli+args and send the payload; 'prompt' = send a
+# ForceReply and capture the reply. Session plumbing commands (/new, /topic …)
+# aren't in the manifest, so they fall through to the original handler.
+def _menu_dispatch():
+    return {c["cmd"]: c.get("handler", {}) for c in _load_menu() if c.get("cmd")}
 
 
-async def _handle_menu_command(adapter, msg, cmd: str) -> None:
-    """Send the flow-entry payload for a bot-menu command as a new message."""
-    if cmd == "review":
-        payload = await _review_cli_json(["card", "--at", "first", "--f", "a"])
-    elif cmd == "tasks":
-        payload = await _commit_cli_json(["home"])
-    elif cmd == "status":
-        payload = await _status_cli_json(["status"])
-    else:  # today
-        payload = await _status_cli_json(["today"])
+async def _handle_menu_command(adapter, msg, handler) -> None:
+    """Serve one bot-menu command from its manifest handler dict."""
+    htype = handler.get("type")
+    if htype == "prompt":
+        # Guided flows (e.g. /newclient): ask, then capture the reply.
+        try:
+            from telegram import ForceReply
+            prompt = await msg.reply_text(
+                handler.get("prompt", "Reply to continue."),
+                parse_mode="Markdown",
+                reply_markup=ForceReply(selective=False),
+            )
+            _PENDING_NOTES[prompt.message_id] = {
+                "kind": handler.get("capture", "newclient"),
+                "chat_id": getattr(msg, "chat_id", None),
+                "card_msg_id": getattr(prompt, "message_id", None),
+            }
+            _gc_pending()
+        except Exception:
+            logger.exception("review-buttons: menu prompt failed")
+        return
+
+    # 'render': run the manifest's cli+args and post the JSON payload.
+    cli = _CLI_BY_FILE.get(handler.get("cli", ""))
+    if not cli:
+        await msg.reply_text("Couldn't render — try again.")
+        return
+    payload = await asyncio.to_thread(_run_cli_json, cli, list(handler.get("args", [])))
     if not payload:
         await msg.reply_text("Couldn't render — try again.")
         return
@@ -670,10 +781,11 @@ def _install_command_wrap() -> bool:
             text = (getattr(msg, "text", None) or "").strip()
             if msg is not None and text.startswith("/"):
                 cmd = text.split()[0][1:].split("@")[0].lower()
-                if cmd in _MENU_COMMANDS:
+                handler = _menu_dispatch().get(cmd)
+                if handler:
                     if not _authorize_msg(self, msg):
                         return  # silently ignore in unauthorized chats
-                    return await _handle_menu_command(self, msg, cmd)
+                    return await _handle_menu_command(self, msg, handler)
         except Exception:
             logger.exception("review-buttons: command wrap raised; deferring to original")
         return await orig(self, update, context)
@@ -712,19 +824,15 @@ def _install_text_wrap() -> bool:
     return True
 
 
-# The five guided-workflow menu items, pinned to the top of the bot menu.
+# The guided-workflow menu items, pinned to the top of the bot menu — sourced
+# from the manifest (telegram-menu.json) so they never drift from dispatch.
 # Hermes rebuilds the Telegram menu from hermes_cli.commands.telegram_menu_commands
 # on EVERY gateway start (all scopes + lazy per-chat re-registration), so a
 # one-shot setMyCommands gets clobbered on the next restart. Patching the
 # source function instead means Hermes itself registers our items, in every
 # scope, on every boot — genuinely self-healing.
-_WORK_MENU = [
-    ("review", "📋 Review queue — work through pending cards"),
-    ("tasks", "✅ Tasks — open, register, leaderboard"),
-    ("newclient", "➕ New client — guided create (you confirm)"),
-    ("status", "🔍 Status — queue depth, tasks, last ingest"),
-    ("today", "📅 Today — due and overdue tasks"),
-]
+def _work_menu():
+    return [(c["cmd"], c.get("desc", c["cmd"])) for c in _load_menu() if c.get("cmd")]
 
 
 def _install_menu_wrap() -> bool:
@@ -743,8 +851,9 @@ def _install_menu_wrap() -> bool:
             cmds, hidden = orig(max_commands=max_commands)
         except Exception:
             cmds, hidden = [], 0
-        work_names = {n for n, _ in _WORK_MENU}
-        merged = list(_WORK_MENU) + [(n, d) for (n, d) in cmds if n not in work_names]
+        work = _work_menu()
+        work_names = {n for n, _ in work}
+        merged = list(work) + [(n, d) for (n, d) in cmds if n not in work_names]
         if len(merged) > max_commands:
             hidden += len(merged) - max_commands
             merged = merged[:max_commands]
@@ -781,6 +890,8 @@ def _install_wrap() -> bool:
                 return await _handle_review_callback(self, query, data)
             if data.startswith("tk:"):
                 return await _handle_tasks_callback(self, query, data)
+            if data.startswith("nc:"):
+                return await _handle_newclient_callback(self, query, data)
         except Exception:
             # Never let our code break inbound handling — fall through to original.
             logger.exception("review-buttons: rq/tk handler raised; deferring to original")
