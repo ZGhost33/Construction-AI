@@ -431,6 +431,30 @@ async function cmdApprove(args) {
     }
   }
 
+  // 4) Link the approved plan into the job's living context (Intelligent Jobs
+  // §2/§3) so the agent reads the schedule as primary context — and §4 can
+  // check actual state against the planned phases. Best-effort, non-fatal.
+  try {
+    const jc = require('./job-context.js');
+    jc.applyUpdate(String(p.job_number), {
+      job: p.job_title, client: p.client,
+      scheduleRef: {
+        drive_url: outputs.drive_url || null, drive_file_id: outputs.drive_file_id || null,
+        duration_weeks: p.duration_weeks || null, start_date: p.start_date || null,
+        phases: (p.weeks || []).map(w => ({ week: w.week, phase: w.phase, start: w.start, end: w.end })),
+        scope_confidence: p.scope_confidence || null, approved_at: new Date().toISOString(),
+      },
+      materialsRef: {
+        drive_url: outputs.drive_url || null,
+        long_lead: (p.materials || []).filter(m => m.long_lead).map(m => ({ item: m.item, needed_by: m.needed_by })),
+        count: (p.materials || []).length,
+      },
+      timelineEvent: `Schedule approved — ${p.duration_weeks || '?'} week(s), ${(p.weeks || []).length} phase(s)`,
+      source: 'schedule',
+    });
+    report.push('✓ Linked into job context');
+  } catch (e) { /* non-fatal — context is working memory, not the deliverable */ }
+
   r.outputs = outputs;
   r.status = 'approved';
   r.approved_at = new Date().toISOString();

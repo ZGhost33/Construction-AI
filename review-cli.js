@@ -554,6 +554,7 @@ function detailPayload(id, code) {
         L.push(`*Current job state — ${clean(ctx.job || ('job #' + ctx.job_id), 32)}:*`);
         if (ctx.phase) L.push(`Phase: ${clean(ctx.phase, 24)}`);
         for (const s of (ctx.state || []).slice(-6)) L.push(`• ${clean(s.element, 24)}: ${clean(s.status, 48)} _(${s.basis === 'INFERRED' ? '🤔 inferred' : 'stated'})_`);
+        if (ctx.schedule_ref) L.push(`📐 _Schedule: ${ctx.schedule_ref.duration_weeks || '?'} wk${ctx.schedule_ref.scope_confidence === 'low' ? ' · ⚠ thin scope' : ''}_`);
       }
     }
   } catch { /* best-effort */ }

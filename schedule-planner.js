@@ -157,7 +157,8 @@ Rules:
 - FABRICATED CABINETRY (cabinets and their matching accessories/moldings/panels) has a long shop lead time: the purchase order must be placed about 4 WEEKS before the cabinet-install week. Call this out in the item's notes (e.g. "Order ~4 weeks before install").
 - Cross-reference: every material's "for_phase" must name the phase/week that uses it, and each week lists which materials must be on site that week.
 - Quantities: include a number only if it's clearly inferable from the scope; otherwise null. Never invent SKUs or prices.
-- If the scope is thin or ambiguous, make reasonable assumptions and list them in "assumptions". Mark the whole thing as tentative.
+- THIN SCOPE: if the scope is too thin to sequence a phase honestly, do NOT invent a plausible sequence — that poisons everything downstream. Set "scope_confidence" to "low", set the affected weeks' phase to "UNKNOWN — needs input" with an empty tasks list, and add a pointed line to "needs_input" naming exactly what you'd need (e.g. "Is there electrical scope?"). Only sequence phases the scope actually supports. A short honest plan beats a long invented one.
+- If the scope is merely incomplete (not absent), make reasonable assumptions and list them in "assumptions"; set "scope_confidence" to "medium".
 
 Respond with ONE JSON object, no prose, no code fences:
 {
@@ -185,7 +186,9 @@ Respond with ONE JSON object, no prose, no code fences:
       "notes": string|null
     }
   ],
-  "assumptions": [string, ...]
+  "assumptions": [string, ...],
+  "scope_confidence": "high|medium|low",       // low = scope too thin to sequence honestly
+  "needs_input": [string, ...]                 // specific questions when scope_confidence is low
 }`;
 
 async function generatePlan(job, clientName, opts = {}) {
