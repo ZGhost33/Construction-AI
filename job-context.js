@@ -88,6 +88,8 @@ function applyUpdate(jobId, p) {
     if (p.client) ctx.client = p.client;
     if (p.address) ctx.address = p.address;
     if (p.phase) ctx.phase = p.phase;
+    if (p.scheduleRef) ctx.schedule_ref = p.scheduleRef;     // §2: planned phases the agent reads
+    if (p.materialsRef) ctx.materials_ref = p.materialsRef;
     const date = p.date || new Date().toISOString().slice(0, 10);
     const srcId = p.recordingId || null;
     for (const si of (p.stateItems || [])) {
@@ -151,6 +153,18 @@ function render(ctx) {
   if (!(ctx.state || []).length) L.push('  (nothing recorded yet)');
   for (const s of (ctx.state || [])) {
     L.push(`  - ${s.element}: ${s.status} [${s.basis}${s.confirmed ? '' : ', unconfirmed'}, ${s.date}]`);
+  }
+  if (ctx.schedule_ref) {
+    const sr = ctx.schedule_ref;
+    L.push('');
+    L.push(`SCHEDULE (${sr.duration_weeks || '?'} week(s)${sr.scope_confidence === 'low' ? ', ⚠ low-confidence scope' : ''})`);
+    for (const ph of (sr.phases || []).slice(0, 12)) L.push(`  wk${ph.week} ${ph.start || ''}: ${ph.phase}`);
+    if (sr.drive_url) L.push(`  → ${sr.drive_url}`);
+  }
+  if (ctx.materials_ref && (ctx.materials_ref.long_lead || []).length) {
+    L.push('');
+    L.push('MATERIALS — long-lead');
+    for (const m of ctx.materials_ref.long_lead.slice(0, 8)) L.push(`  - ${m.item}${m.needed_by ? ' (by ' + m.needed_by + ')' : ''}`);
   }
   if ((ctx.open_questions || []).length) {
     L.push('');
