@@ -32,7 +32,7 @@ const crypto        = require('crypto');
 const { fetchRecordings }       = require('./src/pocket');
 const { getRecordingWithAudio } = require('./src/pocket-mcp');
 const { segmentRecording }      = require('./src/segmenter');
-const { analyzeConversation }   = require('./src/claude');
+const { analyzeConversation, analyzeConversationSegments } = require('./src/claude');
 const { isProcessed, markProcessed, bumpAttempt, clearAttempts } = require('./src/storage');
 const { log }                   = require('./src/logger');
 
@@ -74,7 +74,7 @@ function addToQueue(item) {
 async function sendTelegramDigest(botToken, chatId, items) {
   if (!botToken || !chatId || !items.length) return;
 
-  const lines = [`📋 *${items.length} recording${items.length > 1 ? 's' : ''} in review queue*`];
+  const lines = [`📋 *${items.length} item${items.length > 1 ? 's' : ''} in review queue*`];
   const pending = loadQueue().filter(q => q.status === 'pending');
 
   // Group by confidence
@@ -480,40 +480,63 @@ async function processConversation(conv, recId, recDate, devicePerson, voiceMatc
   const config = loadConfig();
   const label = `${recId}:conv${conv.index}`;
 
-  // Step 4a: Analyze with Claude (new function — no "UNKNOWN is worse than a guess")
-  let analysis;
+  // Step 4a: split the conversation into per-job SEGMENTS and analyze each
+  // (Intelligent Jobs §A). One LLM call returns 1..n segments; a single-job
+  // conversation yields exactly one (n=1, identical to the old behaviour).
+  // Layered fallback — segment-split → single analysis → UNKNOWN review item —
+  // so the splitter can never make ingest worse than it was.
+  let segments = null;
   try {
-    analysis = await analyzeConversation(
-      config.anthropic_api_key,
-      business,
-      conv.transcript,
-      recDate,
-      devicePerson,
-      null,    // confirmedClient — will be set after gate evaluation if voice confirms
-      null     // knownJobs — populated below for high-confidence cases
-    );
+    const result = await analyzeConversationSegments(config.anthropic_api_key, business, conv.transcript, recDate, devicePerson);
+    segments = result.segments;
   } catch (err) {
-    // Don't silently drop this conversation. We can't safely retry the whole
-    // recording (earlier conversations may already have written Jobber notes in
-    // normal mode → double-write), so surface it to the review queue instead.
-    log(`[Ingest] ${label}: Claude analysis failed: ${err.message} — queuing for manual review`);
-    const item = {
-      id: 'rq_' + crypto.randomBytes(6).toString('hex'),
-      recording_id: recId,
-      recording_date: recDate,
-      conversation_index: conv.index,
-      device_person: devicePerson,
-      transcript_snippet: conv.transcript.slice(0, 300),
-      bucket: 'uncertain',
-      proposed_client: 'UNKNOWN',
-      proposed_action: 'review',
-      proposed_note: null,
-      confidence: 'low',
-      reason: 'Claude analysis failed: ' + err.message,
-      signals: { device: devicePerson, voice: Object.keys(voiceMatches).length ? voiceMatches : null },
-    };
-    addToQueue(item);
-    newQueueItems.push(item);
+    log(`[Ingest] ${label}: segment split failed: ${err.message} — falling back to single analysis`);
+    try {
+      const single = await analyzeConversation(config.anthropic_api_key, business, conv.transcript, recDate, devicePerson, null, null);
+      segments = [single];
+    } catch (err2) {
+      // Don't silently drop this conversation. We can't safely retry the whole
+      // recording (earlier conversations may already have written Jobber notes
+      // in normal mode → double-write), so surface it to the review queue.
+      log(`[Ingest] ${label}: Claude analysis failed: ${err2.message} — queuing for manual review`);
+      const item = {
+        id: 'rq_' + crypto.randomBytes(6).toString('hex'),
+        recording_id: recId,
+        recording_date: recDate,
+        conversation_index: conv.index,
+        segment_index: 0,
+        segment_count: 1,
+        device_person: devicePerson,
+        transcript_snippet: conv.transcript.slice(0, 300),
+        bucket: 'uncertain',
+        proposed_client: 'UNKNOWN',
+        proposed_action: 'review',
+        proposed_note: null,
+        confidence: 'low',
+        reason: 'Claude analysis failed: ' + err2.message,
+        signals: { device: devicePerson, voice: Object.keys(voiceMatches).length ? voiceMatches : null },
+      };
+      addToQueue(item);
+      newQueueItems.push(item);
+      return;
+    }
+  }
+
+  const segCount = Array.isArray(segments) ? segments.length : 0;
+  if (segCount > 1) log(`[Ingest] ${label}: split into ${segCount} job-segment(s)`);
+  for (let si = 0; si < segCount; si++) {
+    await processSegment(segments[si], si, segCount, conv, recId, recDate, devicePerson, voiceMatches, business, autoWriteMode, newQueueItems);
+  }
+}
+
+// Process ONE job-segment of a conversation: closed-roster guard → confidence
+// gate → review queue (strict) or auto-write (normal). Each segment is filed to
+// only its own client/job, so one job's facts can never land in another job's
+// context (Intelligent Jobs §A). `analysis` here is the per-segment analysis.
+async function processSegment(analysis, segIndex, segCount, conv, recId, recDate, devicePerson, voiceMatches, business, autoWriteMode, newQueueItems) {
+  const label = `${recId}:conv${conv.index}${segCount > 1 ? ':seg' + segIndex : ''}`;
+  if (!analysis || typeof analysis !== 'object') {
+    log(`[Ingest] ${label}: empty segment analysis — skipped`);
     return;
   }
 
@@ -548,7 +571,7 @@ async function processConversation(conv, recId, recDate, devicePerson, voiceMatc
 
   // Step 4d: new_prospect → always review queue, never auto-create
   if (bucket === 'new_prospect' || analysis.new_client) {
-    const item = buildQueueItem(recId, recDate, conv, devicePerson, voiceMatches, analysis, gate, 'new_prospect');
+    const item = buildQueueItem(recId, recDate, conv, devicePerson, voiceMatches, analysis, gate, 'new_prospect', segIndex, segCount);
     addToQueue(item);
     newQueueItems.push(item);
     log(`[Ingest] ${label}: possible new client → review queue`);
@@ -567,7 +590,7 @@ async function processConversation(conv, recId, recDate, devicePerson, voiceMatc
         ? gate.reason
         : `${gate.level} confidence — needs confirmation`;
 
-    const item = buildQueueItem(recId, recDate, conv, devicePerson, voiceMatches, analysis, gate, bucket);
+    const item = buildQueueItem(recId, recDate, conv, devicePerson, voiceMatches, analysis, gate, bucket, segIndex, segCount);
     item.reason = reason;
     addToQueue(item);
     newQueueItems.push(item);
@@ -640,7 +663,7 @@ async function processConversation(conv, recId, recDate, devicePerson, voiceMatc
     log(`[Ingest] ${label}: ✓ note written to Jobber for ${clientName}${jobTitle ? ' / ' + jobTitle + (jobNumber ? ' (#' + jobNumber + ')' : '') : ''}`);
   } catch (err) {
     log(`[Ingest] ${label}: Jobber write failed: ${err.message} — sending to review queue`);
-    const item = buildQueueItem(recId, recDate, conv, devicePerson, voiceMatches, analysis, gate, bucket);
+    const item = buildQueueItem(recId, recDate, conv, devicePerson, voiceMatches, analysis, gate, bucket, segIndex, segCount);
     item.reason = 'Jobber write failed: ' + err.message;
     item.proposed_note = noteText;
     addToQueue(item);
@@ -650,14 +673,22 @@ async function processConversation(conv, recId, recDate, devicePerson, voiceMatc
 
 // ── Build a review queue item ─────────────────────────────────────────────────
 
-function buildQueueItem(recId, recDate, conv, devicePerson, voiceMatches, analysis, gate, bucket) {
+function buildQueueItem(recId, recDate, conv, devicePerson, voiceMatches, analysis, gate, bucket, segIndex, segCount) {
+  // A segment carries its own transcript excerpt (the lines for THIS job only);
+  // fall back to the whole conversation snippet for the n=1 / legacy case.
+  const slice = (analysis.transcript_excerpt && String(analysis.transcript_excerpt).trim())
+    ? String(analysis.transcript_excerpt).slice(0, 600)
+    : conv.transcript.slice(0, 300);
   return {
     id: 'rq_' + crypto.randomBytes(6).toString('hex'),
     recording_id: recId,
     recording_date: recDate,
     conversation_index: conv.index,
+    segment_index: segIndex || 0,
+    segment_count: segCount || 1,
+    segment_topic: analysis.topic || null,
     device_person: devicePerson,
-    transcript_snippet: conv.transcript.slice(0, 300),
+    transcript_snippet: slice,
     bucket,
     proposed_client: analysis.client || 'UNKNOWN',
     proposed_job: analysis.job_id || null,
