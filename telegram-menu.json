@@ -1,0 +1,35 @@
+{
+  "_comment": "Single source of truth for the Telegram bot menu. telegram-menu.js builds setMyCommands from this; the review-buttons plugin reads it to register the menu on every gateway boot AND to dispatch each command; smoke-test.js asserts every command here has a reachable handler (no 'registered but not wired'). Handler types: 'render' = run cli+args and send the JSON payload; 'prompt' = send a ForceReply and capture the reply (probe is the read-only reachability check the smoke test runs).",
+  "commands": [
+    {
+      "cmd": "review",
+      "desc": "📋 Review queue — work through pending cards",
+      "handler": { "type": "render", "cli": "review-cli.js", "args": ["card", "--at", "first", "--f", "a"] }
+    },
+    {
+      "cmd": "tasks",
+      "desc": "✅ Tasks — open, register, leaderboard",
+      "handler": { "type": "render", "cli": "commit-cli.js", "args": ["home"] }
+    },
+    {
+      "cmd": "newclient",
+      "desc": "➕ New client — guided create (you confirm)",
+      "handler": {
+        "type": "prompt",
+        "capture": "newclient",
+        "prompt": "➕ Reply with the new client's name and address, e.g.\n`Jane Doe, 123 Main St, Stuart FL`",
+        "probe": { "cli": "client-cli.js", "args": ["menu-check"] }
+      }
+    },
+    {
+      "cmd": "status",
+      "desc": "🔍 Status — queue depth, tasks, last ingest",
+      "handler": { "type": "render", "cli": "status-cli.js", "args": ["status"] }
+    },
+    {
+      "cmd": "today",
+      "desc": "📅 Today — due and overdue tasks",
+      "handler": { "type": "render", "cli": "status-cli.js", "args": ["today"] }
+    }
+  ]
+}
