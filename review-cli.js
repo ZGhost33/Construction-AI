@@ -27,6 +27,8 @@ const NODE = '/root/.hermes/node/bin/node';
 const JOBBER = path.join(DIR, 'jobber-cli.js');
 const DRIVE = path.join(DIR, 'drive-cli.js');
 const JOBCTX = path.join(DIR, 'job-context-cli.js');
+let jobctx = null;
+try { jobctx = require('./job-context.js'); } catch { /* optional */ }
 const COMMITMENTS = path.join(DIR, 'commitments.json');
 const crypto = require('crypto');
 
@@ -445,6 +447,19 @@ function cardText(it, i, n, code) {
   if (it.proposed_expense && it.proposed_expense.amount != null) {
     L.push(`💵 $${Number(it.proposed_expense.amount).toFixed(2)} _(auto-read — confirm on approve)_`);
   }
+  // §3 read-back: where this client's job(s) stand now, so you review with
+  // context. Local, best-effort — never breaks the card if the store is absent.
+  try {
+    if (jobctx && it.proposed_client && it.proposed_client !== 'UNKNOWN') {
+      const ctxs = jobctx.byClient(it.proposed_client).filter(c => c.phase || (c.state || []).length);
+      if (ctxs.length === 1) {
+        const s = jobctx.summaryLine(ctxs[0]);
+        if (s) L.push(`📋 _Job state: ${clean(s, 60)}_`);
+      } else if (ctxs.length > 1) {
+        L.push(`📋 _${ctxs.length} active jobs: ${clean(ctxs.map(c => c.phase || 'active').join(' · '), 50)}_`);
+      }
+    }
+  } catch { /* read-back is best-effort */ }
   return L.join('\n');
 }
 
@@ -530,6 +545,18 @@ function detailPayload(id, code) {
   if (it.analysis_summary) { L.push(''); L.push('*Summary:*'); L.push(cleanML(it.analysis_summary, 700)); }
   if (it.transcript_snippet) { L.push(''); L.push('*Transcript excerpt:*'); L.push(`“${cleanML(it.transcript_snippet, 700)}”`); }
   if (it.proposed_note) { L.push(''); L.push(`*Note that Approve writes to ${clean(it.proposed_client || '?', 32)}:*`); L.push(cleanML(it.proposed_note, 2200)); }
+  // §3 read-back: the current state of this client's job(s), so the reviewer
+  // sees where the job is before approving more onto it.
+  try {
+    if (jobctx && it.proposed_client && it.proposed_client !== 'UNKNOWN') {
+      for (const ctx of jobctx.byClient(it.proposed_client).filter(c => c.phase || (c.state || []).length)) {
+        L.push('');
+        L.push(`*Current job state — ${clean(ctx.job || ('job #' + ctx.job_id), 32)}:*`);
+        if (ctx.phase) L.push(`Phase: ${clean(ctx.phase, 24)}`);
+        for (const s of (ctx.state || []).slice(-6)) L.push(`• ${clean(s.element, 24)}: ${clean(s.status, 48)} _(${s.basis === 'INFERRED' ? '🤔 inferred' : 'stated'})_`);
+      }
+    }
+  } catch { /* best-effort */ }
   let text = L.join('\n');
   if (text.length > 3900) text = text.slice(0, 3899) + '…';
   return { ok: true, parse_mode: 'Markdown', id, text, reply_markup: { inline_keyboard: [
