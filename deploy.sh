@@ -101,6 +101,9 @@ RSYNC_EXCLUDES=(
   --exclude 'leaderboard-archive.json'
   --exclude 'contacts.json'
   --exclude 'new-client-drafts.json'
+  --exclude 'job-context.json'
+  --exclude 'job-context.json.lock'
+  --exclude 'job-context.json.tmp-*'
   --exclude 'deployments.json'
   --exclude 'PIPELINE_CONTEXT.md'
 )

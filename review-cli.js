@@ -26,6 +26,7 @@ const CONFIG = path.join(DIR, 'config.json');
 const NODE = '/root/.hermes/node/bin/node';
 const JOBBER = path.join(DIR, 'jobber-cli.js');
 const DRIVE = path.join(DIR, 'drive-cli.js');
+const JOBCTX = path.join(DIR, 'job-context-cli.js');
 const COMMITMENTS = path.join(DIR, 'commitments.json');
 const crypto = require('crypto');
 
@@ -303,6 +304,28 @@ function cmdApprove(ref, flags) {
     catch (err) { console.log(`⚠ Note posted; commitment extraction skipped (${(err.message || '').slice(0, 120)}).`); }
   }
 
+  // Update the job's living context file (Intelligent Jobs §3). This approved
+  // segment is already scoped to ONE job (§A), so its state writes only into
+  // that job's context — cross-job contamination is structurally impossible.
+  // Non-fatal: the note is already in Jobber; a context-write failure is logged
+  // and never blocks the approval. Keyed on jobNum (no job# → skip, can't key).
+  let contextMsg = '';
+  if (jobNum) {
+    try {
+      const speaker = it.device_person || (it.signals && it.signals.content) || '';
+      const ctxArgs = [JOBCTX, 'update', '--job', jobNum, '--client', canonical, '--note', noteText,
+        '--recording-id', it.recording_id || it.id, '--source', it.source || 'recording'];
+      if (it.proposed_job) ctxArgs.push('--job-title', String(it.proposed_job));
+      if (speaker) ctxArgs.push('--speaker', String(speaker));
+      const cr = execFileSync(NODE, ctxArgs, { encoding: 'utf8', timeout: 60000, stdio: ['pipe', 'pipe', 'pipe'] }).toString().trim();
+      it.context_result = cr.slice(0, 300);
+      contextMsg = `\n${cr.split('\n').pop()}`;
+    } catch (err) {
+      it.context_error = (err.stderr || err.message || '').toString().slice(0, 300);
+      // Quiet by default — context is the agent's memory, not a user deliverable.
+    }
+  }
+
   // Log the receipt expense (note already posted; failure here is non-fatal).
   let expenseMsg = '';
   if (expensePlan) {
@@ -328,6 +351,7 @@ function cmdApprove(ref, flags) {
   console.log(`✅ Approved — note written to *${canonical}*${jobNum ? ' (job #' + jobNum + ')' : ''}.\n${it.jobber_result}` +
     (driveResult ? `\n📎 Filed "${it.attachment_name}" to ${canonical}'s Drive folder.\n${driveResult}` : '') +
     (committed ? `\n📌 Logged ${committed} commitment${committed > 1 ? 's' : ''} to your follow-up list (\`commit-cli.js list\`).` : '') +
+    contextMsg +
     expenseMsg);
 }
 

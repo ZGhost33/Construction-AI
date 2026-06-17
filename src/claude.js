@@ -370,4 +370,38 @@ CRITICAL RULES:
   };
 }
 
-module.exports = { analyzeTranscript, analyzeConversation, analyzeConversationSegments };
+// ── Per-job state extraction (Intelligent Jobs §3) ────────────────────────────
+// Given an approved note for ONE job, extract the job STATE it states — phase,
+// status of trade/phase elements, and a one-line timeline event. STATED facts
+// only: never infer beyond the text (that's §4). Conservative on purpose —
+// garbage state poisons downstream inference.
+async function extractJobState(apiKey, business, noteText, ctx = {}) {
+  const client = getClient(apiKey);
+  const sys = `You extract construction job STATE from one approved field note for ${business.name}.
+Return ONLY valid JSON — no markdown fences, no explanation:
+{
+  "phase": "<the job's current phase if the note clearly implies one, else null>",
+  "state": [ { "element": "<trade/phase or building element>", "status": "<short current status>" } ],
+  "timeline_event": "<one short past-tense line summarizing what this note records, <=140 chars>"
+}
+RULES:
+- STATED ONLY. Record only what the note actually says. If painters are coming Thursday, status is "painters scheduled Thursday" — NOT "paint started". Never infer a completion the note doesn't state.
+- element: lowercase generic trade/phase words (demo, rough-in, drywall, paint, trim, flooring, inspection, etc.). Merge synonyms (sheetrock→drywall).
+- 0 to 4 state items. Skip vague talk. If the note states no concrete job state, return an empty state array.
+- Do not include any text outside the JSON object.`;
+  const msg = `JOB: ${ctx.jobTitle || '?'} for ${ctx.client || '?'}\n\nAPPROVED NOTE:\n${noteText}`;
+  const response = await client.messages.create({
+    model: MODEL,
+    max_tokens: 1024,
+    system: [{ type: 'text', text: sys }],
+    messages: [{ role: 'user', content: msg }],
+  });
+  const parsed = parseAnalysis(response.content[0]?.text || '');
+  return {
+    phase: parsed.phase || null,
+    state: Array.isArray(parsed.state) ? parsed.state : [],
+    timeline_event: parsed.timeline_event || null,
+  };
+}
+
+module.exports = { analyzeTranscript, analyzeConversation, analyzeConversationSegments, extractJobState };
