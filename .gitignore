@@ -29,6 +29,7 @@ capture-queue.json
 leaderboard-archive.json
 contacts.json
 new-client-drafts.json
+job-context.json
 
 # Dependencies
 node_modules/
