@@ -371,6 +371,12 @@ function clean(s, max) {
   if (max && t.length > max) t = t.slice(0, max - 1).trimEnd() + '…';
   return t;
 }
+// like clean() but keeps line breaks — for multi-paragraph fields (full note)
+function cleanML(s, max) {
+  let t = String(s == null ? '' : s).replace(/[`*_\[\]]/g, '').replace(/[ \t]+/g, ' ').trim();
+  if (max && t.length > max) t = t.slice(0, max - 1).trimEnd() + '…';
+  return t;
+}
 function today() { return new Date().toISOString().slice(0, 10); }
 
 function matchesFilter(it, code) {
@@ -430,6 +436,7 @@ function cardKeyboard(it, i, n, code) {
     ],
     [
       { text: '✏️ Update', callback_data: `rq:upd:${code}:${it.id}` },
+      { text: '👁 Full', callback_data: `rq:full:${code}:${it.id}` },
       { text: '🔽 Filter', callback_data: `rq:flt:${code}:${it.id}` },
     ],
     navRow(it, i, n, code),
@@ -469,6 +476,97 @@ function cardPayload(at, move, code) {
     text: cardText(it, idx, list.length, code), reply_markup: cardKeyboard(it, idx, list.length, code) };
   if (answer) pay.answer = answer;
   return pay;
+}
+
+// 👁 Full: everything we know about the item, rendered in place — the complete
+// note that Approve would write, the analyzer's summary, the transcript
+// excerpt, speaker matches, and the gate reason. Approve stays one tap away.
+function detailPayload(id, code) {
+  code = fcode(code);
+  const q = loadQueue();
+  const it = q.find(x => x.id === id);
+  if (!it || it.status !== 'pending') return cardPayload(id, 'here', code);
+  const L = [];
+  L.push('👁 *Full detail*');
+  const src = it.device_person || (it.source === 'field_capture' ? 'field capture' : (it.source || 'recording'));
+  const date = String(it.recording_date || it.created_at || '').slice(0, 10) || '?';
+  L.push(`🎙 ${clean(src, 30)} · ${date} · ${clean(String(it.bucket || '?').replace(/_/g, ' '), 18)} · ${clean(it.confidence || '?', 10)} confidence`);
+  if (it.reason) L.push(`Gate: ${clean(it.reason, 100)}`);
+  const v = (it.signals || {}).voice;
+  if (v && typeof v === 'object') {
+    const sp = Object.entries(v)
+      .map(([spk, m]) => `${clean(spk, 20)} → ${clean((m && m.name) || '?', 24)}${m && m.confidence != null ? ` (${Math.round(m.confidence * 100)}%)` : ''}`)
+      .slice(0, 5);
+    if (sp.length) L.push(`Voices: ${sp.join(' · ')}`);
+  }
+  if (it.analysis_summary) { L.push(''); L.push('*Summary:*'); L.push(cleanML(it.analysis_summary, 700)); }
+  if (it.transcript_snippet) { L.push(''); L.push('*Transcript excerpt:*'); L.push(`“${cleanML(it.transcript_snippet, 700)}”`); }
+  if (it.proposed_note) { L.push(''); L.push(`*Note that Approve writes to ${clean(it.proposed_client || '?', 32)}:*`); L.push(cleanML(it.proposed_note, 2200)); }
+  let text = L.join('\n');
+  if (text.length > 3900) text = text.slice(0, 3899) + '…';
+  return { ok: true, parse_mode: 'Markdown', id, text, reply_markup: { inline_keyboard: [
+    [
+      { text: '✅ Approve', callback_data: `rq:approve:${code}:${id}` },
+      { text: '⬅ Back to card', callback_data: `rq:card:${code}:${id}` },
+    ],
+  ] } };
+}
+
+// Card-flow approve executor: run the real cmdApprove (captured) and translate
+// the outcome into a render payload. Three outcomes:
+//   approved   → next card + receipt text (plugin posts the receipt as a reply)
+//   AMBIGUOUS  → job-picker keyboard (rq:aokj:<F>:<jobNum>:<id>) so the
+//                operator routes the note instead of the item silently sticking
+//   other fail → error card with the captured output, item stays pending
+function runApproveCaptured(ref, flags) {
+  const logs = [];
+  const origLog = console.log, origExit = process.exit;
+  console.log = (...a) => logs.push(a.join(' '));
+  process.exit = (c) => { const e = new Error('exit'); e.__exit = c || 0; throw e; };
+  try { cmdApprove(ref, flags); }
+  catch (e) { if (e == null || e.__exit === undefined) logs.push('❌ ' + ((e && e.message) || String(e))); }
+  finally { console.log = origLog; process.exit = origExit; }
+  return logs.join('\n');
+}
+
+function cmdApproveExec(flags) {
+  const id = flags.id;
+  const code = fcode(flags.f);
+  const back = [{ text: '⬅ Back to card', callback_data: `rq:card:${code}:${id}` }];
+  const q0 = loadQueue();
+  const before = q0.find(x => x.id === id);
+  if (!before || before.status !== 'pending') {
+    const pay = cardPayload(id, 'here', code);
+    pay.answer = 'Item no longer pending.';
+    outJSON(pay); return;
+  }
+  const apFlags = {};
+  if (flags.job != null) apFlags.job = flags.job;
+  const out = runApproveCaptured(id, apFlags);
+
+  const q = loadQueue();
+  const it = q.find(x => x.id === id);
+  if (it && it.status === 'approved') {
+    const pay = cardPayload(id, 'here', code); // id left pending set → advances
+    pay.answer = '✅ Approved';
+    pay.receipt = out.slice(0, 3000);
+    outJSON(pay); return;
+  }
+  if (/AMBIGUOUS/.test(out)) {
+    const jobs = [...out.matchAll(/#(\d+) — (.+)/g)].slice(0, 8)
+      .map(m => ({ num: m[1], title: m[2].trim() }));
+    if (jobs.length) {
+      const rows = jobs.map(j => ([{ text: clean(`#${j.num} ${j.title}`, 32), callback_data: `rq:aokj:${code}:${j.num}:${id}` }]));
+      rows.push(back);
+      outJSON({ ok: true, parse_mode: 'Markdown', id,
+        text: `🧭 *Which job for ${clean((it && it.proposed_client) || 'this client', 32)}?*\n_The note didn't clearly match one active job — pick where it goes:_`,
+        reply_markup: { inline_keyboard: rows }, answer: 'Pick the job' });
+      return;
+    }
+  }
+  outJSON({ ok: true, parse_mode: 'Markdown', id, answer: 'Approve failed', alert: true,
+    text: `❌ *Approve failed — item left pending.*\n\n${clean(out, 600)}`,
+    reply_markup: { inline_keyboard: [back] } });
 }
 
 // Two-tap approve, in place: render the card text + a Confirm/Cancel keyboard.
@@ -588,6 +686,8 @@ switch (cmd) {
   // ── card cycler (JSON out; consumed by the review-buttons plugin) ──────────
   case 'card': outJSON(cardPayload(flags.at || 'first', flags.move || 'here', flags.f || defaultFilter())); break;
   case 'approve-prompt': outJSON(approvePromptPayload(flags.id, flags.f)); break;
+  case 'approve-exec': cmdApproveExec(flags); break;
+  case 'detail': outJSON(detailPayload(flags.id, flags.f)); break;
   case 'filter-menu': outJSON(filterMenuPayload(flags.id, flags.f)); break;
   case 'update-menu': outJSON(updateMenuPayload(flags.id, flags.f)); break;
   case 'picker': outJSON(pickerPayload(flags.kind === 'speaker' ? 'speaker' : 'client', flags.id, flags.f, flags.page)); break;

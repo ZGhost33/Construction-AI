@@ -203,8 +203,12 @@ function draftForTask(it, op) {
   const sender = resolveSender(op);
   if (!sender) return { error: 'Email not configured (businesses[0].email.senders).' };
   const opName = String(op || '').trim() || 'Cruz Services';
-  const subject = `${it.client} — ${clean(it.what, 60)}`;
-  const body = [
+  // operator edits (✏️ Edit on the draft card) persist on the task and win
+  // over the template — task-send rebuilds the same way, so what was last
+  // previewed is exactly what goes out.
+  const ov = it.email_draft || {};
+  const subject = ov.subject || `${it.client} — ${clean(it.what, 60)}`;
+  const body = ov.body || [
     `Hi${r.attn ? ' ' + r.attn : ''},`,
     '',
     `Following up on: ${it.what}.`,
@@ -214,7 +218,7 @@ function draftForTask(it, op) {
     opName,
     'Cruz Services',
   ].join('\n');
-  return { sender, to: r.email, subject, body };
+  return { sender, to: r.email, subject, body, edited: !!(ov.subject || ov.body) };
 }
 
 function loadTask(id) {
@@ -226,22 +230,17 @@ function backRow(id, code) {
   return [{ text: '⬅ Back', callback_data: `tk:card:${code}:${id}` }];
 }
 
-function cmdTaskDraft(f) {
-  const code = f.f || 'a';
-  const { it } = loadTask(f.id);
-  if (!it || it.status !== 'open') {
-    outJSON({ ok: false, parse_mode: 'Markdown', text: '❌ Task no longer open.', answer: 'Task not found' });
-    return;
-  }
-  const d = draftForTask(it, f.op);
+// Render the draft-preview card payload (shared by task-draft and the
+// post-edit re-render in task-draft-set).
+function draftPayload(it, op, code) {
+  const d = draftForTask(it, op);
   if (d.error) {
-    outJSON({ ok: true, parse_mode: 'Markdown', text: `✉️ *Can't draft this email*\n\n${d.error}`,
-      reply_markup: { inline_keyboard: [backRow(it.id, code)] } });
-    return;
+    return { ok: true, parse_mode: 'Markdown', text: `✉️ *Can't draft this email*\n\n${d.error}`,
+      reply_markup: { inline_keyboard: [backRow(it.id, code)] } };
   }
   const sentNote = it.email_sent_at ? `\n\n⚠️ _Already emailed ${String(it.email_sent_at).slice(0, 10)} — sending again duplicates it._` : '';
   const text = [
-    '✉️ *Email draft — not sent yet*',
+    `✉️ *Email draft — not sent yet*${d.edited ? ' _(edited)_' : ''}`,
     '',
     `From: ${clean(d.sender, 50)}`,
     `To: ${clean(d.to, 50)}`,
@@ -249,10 +248,57 @@ function cmdTaskDraft(f) {
     '',
     cleanML(d.body, 700),
   ].join('\n') + sentNote;
-  outJSON({ ok: true, parse_mode: 'Markdown', text, reply_markup: { inline_keyboard: [
-    [{ text: '📤 Send it', callback_data: `tk:emok:${code}:${it.id}` }],
+  return { ok: true, parse_mode: 'Markdown', text, reply_markup: { inline_keyboard: [
+    [
+      { text: '📤 Send it', callback_data: `tk:emok:${code}:${it.id}` },
+      { text: '✏️ Edit', callback_data: `tk:emed:${code}:${it.id}` },
+    ],
     backRow(it.id, code),
-  ] } });
+  ] } };
+}
+
+function cmdTaskDraft(f) {
+  const code = f.f || 'a';
+  const { it } = loadTask(f.id);
+  if (!it || it.status !== 'open') {
+    outJSON({ ok: false, parse_mode: 'Markdown', text: '❌ Task no longer open.', answer: 'Task not found' });
+    return;
+  }
+  outJSON(draftPayload(it, f.op, code));
+}
+
+// Apply an operator's free-text edit to the draft. The whole reply becomes the
+// new body; a first line of "Subject: ..." moves into the subject instead.
+function cmdTaskDraftSet(f) {
+  const code = f.f || 'a';
+  const { ledger, it } = loadTask(f.id);
+  if (!it || it.status !== 'open') {
+    outJSON({ ok: false, parse_mode: 'Markdown', text: '❌ Task no longer open.', answer: 'Task not found' });
+    return;
+  }
+  const raw = String(f.text || '').trim();
+  if (!raw) {
+    const pay = draftPayload(it, f.op, code);
+    pay.answer = 'Empty edit — draft unchanged';
+    outJSON(pay);
+    return;
+  }
+  const lines = raw.split('\n');
+  const ov = it.email_draft || {};
+  const m = lines[0].match(/^subject\s*:\s*(.+)$/i);
+  if (m) {
+    ov.subject = m[1].trim();
+    const rest = lines.slice(1).join('\n').trim();
+    if (rest) ov.body = rest;
+  } else {
+    ov.body = raw;
+  }
+  it.email_draft = ov;
+  it.email_draft_by = String(f.op || '').trim() || null;
+  fs.writeFileSync(LEDGER, JSON.stringify(ledger, null, 2));
+  const pay = draftPayload(it, f.op, code);
+  pay.answer = '✏️ Draft updated';
+  outJSON(pay);
 }
 
 async function cmdTaskSend(f) {
@@ -299,6 +345,7 @@ async function main() {
     case 'contacts': return cmdContacts();
     case 'send': return cmdSend(f);
     case 'task-draft': return cmdTaskDraft(f);
+    case 'task-draft-set': return cmdTaskDraftSet(f);
     case 'task-send': return cmdTaskSend(f);
     default:
       console.log('gmail-cli.js — Gmail via Workspace delegation (preview-first)');

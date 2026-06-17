@@ -78,7 +78,17 @@
           "default_filter": "a"
         },
         "tasks": {
-          "default_filter": "a"
+          "default_filter": "a",
+          "delegates": [
+            {
+              "name": "Owner",
+              "profile": "z"
+            },
+            {
+              "name": "Manager",
+              "profile": "manager-profile"
+            }
+          ]
         },
         "leaderboard": {
           "operators": [

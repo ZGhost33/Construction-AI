@@ -146,7 +146,10 @@ function fmtLine(it, i) {
   const cl = it.client ? ` · ${it.client}` : '';
   const job = it.job ? ` (job #${it.job})` : '';
   const flag = isOverdue(it) ? '🔴' : (it.due === todayStr() ? '🟡' : '⚪');
-  return `${i + 1}. ${flag} ${who}${it.what}${cl}${job}  [${dueLabel(it)}]  \`${it.id}\``;
+  // snoozed tasks are hidden from the card cycler/digests until the date —
+  // mark them here so text lists tell the same story.
+  const snz = (it.status === 'open' && it.snooze_until && it.snooze_until > todayStr()) ? `  😴 until ${it.snooze_until}` : '';
+  return `${i + 1}. ${flag} ${who}${it.what}${cl}${job}  [${dueLabel(it)}]${snz}  \`${it.id}\``;
 }
 
 // ── commands ────────────────────────────────────────────────────────────────
@@ -349,6 +352,9 @@ function taskCardKeyboard(it, i, n, code) {
     ],
     [
       { text: '✉️ Email', callback_data: `tk:em:${code}:${it.id}` },
+      { text: '🗑 Dismiss', callback_data: `tk:del:${code}:${it.id}` },
+    ],
+    [
       { text: '⏭ Skip', callback_data: `tk:skip:${code}:${it.id}` },
       { text: '🔽 Filter', callback_data: `tk:flt:${code}:${it.id}` },
     ],
@@ -410,9 +416,22 @@ function snoozeMenuPayload(id, code) {
   ] } };
 }
 
+// Who can a task be delegated TO — the operator team, not the whole people
+// roster (subs/suppliers don't run the bots). Config-driven:
+// businesses[0].telegram_ui.tasks.delegates = [{name, profile}], where profile
+// is the Hermes profile whose bot gets the "new task for you" ping. Falls back
+// to the leaderboard operators (no ping target known).
+function delegateList() {
+  const d = ((uiCfg().tasks || {}).delegates);
+  if (Array.isArray(d) && d.length) {
+    return d.map(x => (typeof x === 'string' ? { name: x } : x)).filter(x => x && x.name);
+  }
+  return operatorList().map(name => ({ name }));
+}
+
 function delegatePickerPayload(id, code, page) {
   code = tfcode(code);
-  const list = peopleList();
+  const list = delegateList();
   const PER = 8;
   const pages = Math.max(1, Math.ceil(list.length / PER));
   const p = Math.min(Math.max(0, parseInt(page, 10) || 0), pages - 1);
@@ -427,6 +446,29 @@ function delegatePickerPayload(id, code, page) {
   if (p < pages - 1) navrow.push({ text: '▶', callback_data: `tk:pd:${code}:${p + 1}:${id}` });
   rows.push(navrow);
   return { ok: true, parse_mode: 'Markdown', text: 'Delegate to *whom*?', reply_markup: { inline_keyboard: rows } };
+}
+
+// Ping the delegate's own bot: a DM in their home channel with the task and an
+// Open button (their gateway runs the same plugin + shared ledger, so the
+// button opens the live card). Best-effort — a failed ping never blocks the
+// delegation itself.
+async function pingDelegate(delegate, it, by) {
+  if (!delegate.profile) return false;
+  const envPath = `/root/.hermes/profiles/${delegate.profile}/.env`;
+  const env = fs.readFileSync(envPath, 'utf8');
+  const token = (env.match(/TELEGRAM_BOT_TOKEN\s*=\s*(.+)/) || [])[1];
+  const chat = (env.match(/TELEGRAM_HOME_CHANNEL\s*=\s*(.+)/) || [])[1];
+  if (!token || !chat) return false;
+  const L = [`👤 *New task for you* — delegated by ${tclean(by || 'the office', 30)}`, ''];
+  L.push(`${tclean(it.what, 120)}${it.client ? ` · ${tclean(it.client, 40)}` : ''}`);
+  L.push(tclean(dueLabel(it), 30));
+  await require('axios').post(`https://api.telegram.org/bot${token.trim()}/sendMessage`, {
+    chat_id: chat.trim(),
+    text: L.join('\n'),
+    parse_mode: 'Markdown',
+    reply_markup: { inline_keyboard: [[{ text: '📂 Open task', callback_data: `tk:card:a:${it.id}` }]] },
+  }, { timeout: 10000 });
+  return true;
 }
 
 // Find an OPEN ledger item by cm_ id (cycler actions never touch done/cancelled).
@@ -451,17 +493,22 @@ function cmdTaskDone(f) {
   pay.answer = `✅ Done${it.completed_by ? ' — ' + it.completed_by : ''}`;
   outJSON(pay);
 }
-function cmdTaskDelegate(f) {
+async function cmdTaskDelegate(f) {
   const l = loadLedger();
   const it = openItem(l, f.id);
   if (!it) { outJSON(staleCardPayload(f.id, f.f, f.op)); return; }
-  const p = peopleList()[parseInt(f.person, 10)];
-  if (!p) { outJSON({ ok: false, parse_mode: 'Markdown', text: '❌ Bad selection.', answer: 'Bad selection' }); return; }
-  it.delegated_to = p.name;
+  const d = delegateList()[parseInt(f.person, 10)];
+  if (!d) { outJSON({ ok: false, parse_mode: 'Markdown', text: '❌ Bad selection.', answer: 'Bad selection' }); return; }
+  // store the canonical roster name when it resolves (keeps "mine" matching
+  // and the Register consistent), else the configured delegate name as-is
+  it.delegated_to = resolvePersonLenientName(d.name);
   if (f.by) it.delegated_by = resolvePersonLenientName(f.by);
   saveLedger(l);
+  let pinged = false;
+  try { pinged = await pingDelegate(d, it, f.by); }
+  catch { pinged = false; }
   const pay = taskCardPayload(it.id, 'here', tfcode(f.f), f.op);
-  pay.answer = `👤 Delegated to ${p.name}`;
+  pay.answer = `👤 Delegated to ${d.name}${pinged ? ' — bot notified' : ''}`;
   outJSON(pay);
 }
 // ── home / register / leaderboard (Phase 3) ──────────────────────────────────
@@ -597,6 +644,22 @@ function leaderboardPayload() {
     reply_markup: { inline_keyboard: [[{ text: '⬅ Back', callback_data: 'tk:home:a:first' }]] } };
 }
 
+// 🗑 on the task card: cancel (not done) — leaves the Register and the
+// leaderboard untouched, for system-generated tasks that aren't real work.
+function cmdTaskDismiss(f) {
+  const l = loadLedger();
+  const it = openItem(l, f.id);
+  if (!it) { outJSON(staleCardPayload(f.id, f.f, f.op)); return; }
+  it.status = 'cancelled';
+  it.done_at = new Date().toISOString();
+  const by = f.by ? resolvePersonLenientName(f.by) : null;
+  it.note = (it.note ? it.note + ' | ' : '') + `dismissed via Telegram${by ? ' by ' + by : ''}`;
+  saveLedger(l);
+  const pay = taskCardPayload(it.id, 'here', tfcode(f.f), f.op);
+  pay.answer = '🗑 Dismissed';
+  outJSON(pay);
+}
+
 function cmdTaskSnooze(f) {
   const l = loadLedger();
   const it = openItem(l, f.id);
@@ -633,7 +696,8 @@ function main() {
     case 'snooze-menu': return outJSON(snoozeMenuPayload(f.id, f.f));
     case 'delegate-picker': return outJSON(delegatePickerPayload(f.id, f.f, f.page));
     case 'tdone': return cmdTaskDone(f);
-    case 'tdelegate': return cmdTaskDelegate(f);
+    case 'tdismiss': return cmdTaskDismiss(f);
+    case 'tdelegate': return void cmdTaskDelegate(f).catch(e => { outJSON({ ok: false, parse_mode: 'Markdown', text: '❌ ' + e.message, answer: 'Delegate failed' }); });
     case 'tsnooze': return cmdTaskSnooze(f);
     default:
       console.log('commit-cli.js — commitment tracker (nothing falls through the cracks)');

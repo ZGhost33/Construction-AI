@@ -40,9 +40,10 @@ GMAIL_CLI = "/root/construction-bi-pipeline/gmail-cli.js"
 _VALID_ID_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")
 _VALID_FILTER = {"a", "u", "l"}  # card-cycler filter codes (all / unknown / low-conf)
 
-# Free-text "add a note" capture (Phase 1b). When the operator taps 📝 Add note we
-# send a ForceReply prompt and remember it here, keyed by the prompt's message_id.
-# The wrapped text handler consumes the operator's reply, writes it to the queue,
+# Free-text reply capture (review notes, email-draft edits). When the operator
+# taps 📝 Add note / ✏️ Edit we send a ForceReply prompt and remember it here,
+# keyed by the prompt's message_id with a "kind" discriminator. The wrapped
+# text handler consumes the operator's reply, applies it via the right CLI,
 # and refreshes the original card in place. Process-local (single gateway proc).
 _PENDING_NOTES: dict = {}
 
@@ -255,6 +256,9 @@ async def _handle_review_callback(adapter, query, data: str) -> None:
     if verb == "flt":
         await _render_in_place(query, await _review_cli_json(["filter-menu", "--id", rq_id, "--f", code]))
         return
+    if verb == "full":  # full detail view (summary + transcript + complete note)
+        await _render_in_place(query, await _review_cli_json(["detail", "--id", rq_id, "--f", code]))
+        return
     if verb == "upd":
         await _render_in_place(query, await _review_cli_json(["update-menu", "--id", rq_id, "--f", code]))
         return
@@ -347,15 +351,21 @@ async def _handle_review_callback(adapter, query, data: str) -> None:
                 logger.exception("review-buttons: approve confirm prompt failed")
         return
 
-    if verb == "aok":
-        # Card confirm: live Jobber write, post a receipt, then advance the card.
+    if verb in ("aok", "aokj"):
+        # Card confirm: live Jobber write via the approve executor. On ambiguous
+        # job routing it returns a job-picker payload (aokj = retry with the
+        # picked job number); on success it returns the next card + a receipt.
         await query.answer(text="Approving…")
-        out = await _review_cli(["approve", rq_id])
-        try:
-            await query.message.reply_text(f"✅ Approved {rq_id}\n\n{out}"[:3500])
-        except Exception:
-            logger.exception("review-buttons: aok receipt failed")
-        await _apply_edit(query, await _review_cli_json(["card", "--at", rq_id, "--move", "next", "--f", code]))
+        args = ["approve-exec", "--id", rq_id, "--f", code]
+        if verb == "aokj" and arg and arg.isdigit():
+            args += ["--job", arg]
+        payload = await _review_cli_json(args)
+        if payload and payload.get("receipt"):
+            try:
+                await query.message.reply_text(f"✅ Approved {rq_id}\n\n{payload['receipt']}"[:3500])
+            except Exception:
+                logger.exception("review-buttons: approve receipt failed")
+        await _apply_edit(query, payload or {"text": "Couldn't render — try again."})
         return
 
     if verb == "approveok":
@@ -461,10 +471,33 @@ async def _handle_tasks_callback(adapter, query, data: str) -> None:
     if verb == "emok":
         await _render_in_place(query, await _gmail_cli_json(["task-send", "--id", cm_id, "--op", op, "--f", code]))
         return
+    if verb == "emed":  # edit the draft: capture the new text via ForceReply
+        await query.answer()
+        try:
+            from telegram import ForceReply
+            prompt = await query.message.reply_text(
+                "✏️ Reply to this message with the new email text. "
+                "It replaces the body — start the first line with \"Subject:\" to change the subject too.",
+                reply_markup=ForceReply(selective=False),
+            )
+            _PENDING_NOTES[prompt.message_id] = {
+                "kind": "email_edit",
+                "id": cm_id,
+                "code": code,
+                "chat_id": getattr(query.message, "chat_id", None),
+                "card_msg_id": getattr(query.message, "message_id", None),
+            }
+            _gc_pending()
+        except Exception:
+            logger.exception("review-buttons: email edit prompt failed")
+        return
 
     # local ledger writes (single-tap; toast comes back in the payload's answer)
     if verb == "done":
         await _render_in_place(query, await _commit_cli_json(["tdone", "--id", cm_id, "--by", op, "--f", code, "--op", op]))
+        return
+    if verb == "del":  # cancel a not-real task (no Register/leaderboard entry)
+        await _render_in_place(query, await _commit_cli_json(["tdismiss", "--id", cm_id, "--by", op, "--f", code, "--op", op]))
         return
     if verb == "xd":
         if not (arg and arg.isdigit()):
@@ -522,14 +555,21 @@ async def _handle_note_reply(adapter, update) -> bool:
     text = (getattr(msg, "text", None) or "").strip()
     if not text:
         try:
-            await msg.reply_text("Empty note — nothing added.")
+            await msg.reply_text("Empty reply — nothing changed.")
         except Exception:
             pass
         return True
 
-    rq_id = pend.get("rq_id")
+    kind = pend.get("kind", "review_note")
     code = pend.get("code", "a")
-    payload = await _review_cli_json(["update", "--id", rq_id, "--note", text, "--f", code])
+    op = (getattr(from_user, "first_name", None) or caller_id or "unknown")
+    if kind == "email_edit":
+        payload = await _gmail_cli_json(["task-draft-set", "--id", pend.get("id"), "--op", op, "--text", text, "--f", code])
+        confirm_text = "✏️ Draft updated."
+    else:
+        rq_id = pend.get("rq_id")
+        payload = await _review_cli_json(["update", "--id", rq_id, "--note", text, "--f", code])
+        confirm_text = "📝 Note added."
 
     # Refresh the original card in place (the reply is a new message, so we edit
     # the remembered card message id directly via the bot).
@@ -554,7 +594,7 @@ async def _handle_note_reply(adapter, update) -> bool:
                 except Exception:
                     logger.debug("review-buttons: card refresh after note skipped")
     try:
-        await msg.reply_text("📝 Note added.")
+        await msg.reply_text(confirm_text)
     except Exception:
         pass
     return True
