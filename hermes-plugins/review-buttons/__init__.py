@@ -605,9 +605,26 @@ async def _handle_note_reply(adapter, update) -> bool:
         payload = await _gmail_cli_json(["task-draft-set", "--id", pend.get("id"), "--op", op, "--text", text, "--f", code])
         confirm_text = "✏️ Draft updated."
     elif kind == "newclient":
-        # /newclient reply: parse into a confirmation card (no write yet).
+        # /newclient reply: parse into a confirmation card (no write yet). There
+        # is no pre-existing inline card to edit — the only earlier message is
+        # the ForceReply prompt, which can't be turned into a button card via
+        # editMessageText — so send the confirm card as a NEW message instead.
         payload = await _client_cli_json(["preview", "--text", text, "--op", op])
-        confirm_text = "➕ Review and confirm below."
+        if payload:
+            markup = _kbd(payload.get("reply_markup"))
+            try:
+                await msg.reply_text(payload.get("text", ""), reply_markup=markup, parse_mode=payload.get("parse_mode"))
+            except Exception:
+                try:
+                    await msg.reply_text(payload.get("text", ""), reply_markup=markup)
+                except Exception:
+                    logger.exception("review-buttons: newclient confirm card send failed")
+        else:
+            try:
+                await msg.reply_text("Couldn't read that — send /newclient to try again.")
+            except Exception:
+                pass
+        return True
     else:
         rq_id = pend.get("rq_id")
         payload = await _review_cli_json(["update", "--id", rq_id, "--note", text, "--f", code])
