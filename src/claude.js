@@ -261,4 +261,113 @@ CRITICAL RULES:
   return analysis;
 }
 
-module.exports = { analyzeTranscript, analyzeConversation };
+// ── Multi-job segment split (Intelligent Jobs §A) ─────────────────────────────
+// A single conversation can cover several jobs (Harris drywall + the Gallan job
+// + a trim order for a third site). Filing all of that under one client
+// cross-contaminates per-job state. This splits the conversation into SEGMENTS,
+// one per distinct client/job/topic, each fully attributed and noted on its own.
+// Single-job conversations return exactly one segment (the n=1 common case,
+// behaviourally identical to analyzeConversation). One LLM call, same cost.
+async function analyzeConversationSegments(apiKey, business, transcript, recordingDate, devicePerson) {
+  const client = getClient(apiKey);
+  const scopes = loadScopes(business.name);
+
+  const clientList = business.clients
+    .map(c => {
+      const scope = scopes[c.name];
+      return scope ? `- ${c.name} — ${c.address}\n  Scope: ${scope}` : `- ${c.name} — ${c.address}`;
+    })
+    .join('\n');
+  const peopleList = business.people.map(p => `- ${p.name} = ${p.role}`).join('\n');
+  const keywordMap = business.clients.map(c => {
+    const lastName = c.name.split(' ').slice(-1)[0];
+    const street = (c.address || '').match(/\d+\s+\S+\s+(\S+)/)?.[1] || '';
+    const custom = Array.isArray(c.keywords) ? c.keywords : [];
+    const all = [...new Set([...custom, lastName, street].filter(Boolean))];
+    return `- "${all.join(', ')}" → ${c.name}`;
+  }).join('\n');
+
+  const systemContent = `You are analyzing construction project conversations for ${business.name}.
+
+ACTIVE CLIENTS:
+${clientList || '(none configured)'}
+
+CLIENT KEYWORD SHORTCUTS — if any of these words or names appear, map to that client:
+${keywordMap || '(none configured)'}
+
+KNOWN PEOPLE AND ROLES:
+${peopleList || '(none configured)'}
+
+DEVICE WORN BY: ${devicePerson || 'unknown'} — SPEAKER_00 is most likely ${devicePerson || 'the device owner'}.
+
+INSTRUCTIONS:
+This recording may cover MORE THAN ONE job or client — the speaker often moves
+between sites in one continuous talk. Split it into SEGMENTS, one per distinct
+client/job/topic. If the whole thing is about a single job, return exactly ONE
+segment. Return ONLY valid JSON — no markdown fences, no explanation.
+
+{
+  "segments": [
+    {
+      "client": "<exact client name from the list, or UNKNOWN>",
+      "confidence": "<high|medium|low>",
+      "bucket": "<job_relevant|new_prospect|no_business_content|uncertain>",
+      "source_tag": "<Client meeting|Field update|Internal|Supplier call>",
+      "participants": ["name1"],
+      "job_id": "<Job title hint or null>",
+      "topic": "<3-6 word label, e.g. 'Harris drywall' or 'trim material order'>",
+      "transcript_excerpt": "<the lines from THIS segment only, quoted, ~400 chars max>",
+      "summary": "<2-3 sentence summary of THIS segment only>",
+      "commitments": [{"who": "name", "what": "promised", "by_when": "ISO date or null"}],
+      "open_questions": ["unresolved question"],
+      "note_text": "<Jobber note for THIS segment only — [source_tag] date, summary, commitments, open questions>",
+      "new_client": null
+    }
+  ]
+}
+
+CRITICAL RULES:
+- One segment per distinct job/client. A talk about Harris drywall, the Gallan
+  job, and a trim order for a third site = THREE segments. But never split a
+  single coherent job discussion into several segments.
+- ISOLATION: each segment's summary, commitments, and note_text contain ONLY
+  that segment's facts. NEVER let one job's facts appear in another segment —
+  wrong attribution corrupts downstream job state. This is the whole point.
+- Return UNKNOWN for a segment's client if you cannot identify it. Do NOT guess
+  to avoid UNKNOWN — an unidentified segment is fine, a human will route it.
+- Single keyword match (one last name, one street) = medium confidence at most.
+  Two or more independent signals (name + scope, or name + address) = high.
+- no_business_content: personal talk, dead air, zero job context — give it its
+  own segment with that bucket; it will be dropped.
+- Internal team status/next-steps talk is job_relevant, never no_business_content.
+- source_tag: "Client meeting" if a non-team participant is present; "Field
+  update" if device owner is on site reporting; "Internal" if all team members;
+  "Supplier call" if a supplier is talking.
+- note_text format: "[source_tag] YYYY-MM-DD\\n\\n<summary>\\n\\nCommitments:\\n• who → what\\n\\nOpen questions:\\n• question". Omit empty sections.
+- new_client: only if someone explicitly declares a new client (name + intent). Otherwise null.`;
+
+  const response = await client.messages.create({
+    model: MODEL,
+    max_tokens: 4096,
+    system: [{ type: 'text', text: systemContent, cache_control: { type: 'ephemeral' } }],
+    messages: [{ role: 'user', content: `Recording date: ${recordingDate || 'unknown'}\n\nTRANSCRIPT:\n${transcript}` }],
+  });
+
+  const raw = response.content[0]?.text || '';
+  const parsed = parseAnalysis(raw);
+  // Tolerate the model returning a bare single object instead of {segments:[…]}.
+  let segments = Array.isArray(parsed.segments) ? parsed.segments : null;
+  if (!segments || !segments.length) segments = [parsed];
+  const usage = response.usage || {};
+  return {
+    segments,
+    _cache_stats: {
+      input_tokens: usage.input_tokens,
+      output_tokens: usage.output_tokens,
+      cache_read: usage.cache_read_input_tokens,
+      cache_created: usage.cache_creation_input_tokens,
+    },
+  };
+}
+
+module.exports = { analyzeTranscript, analyzeConversation, analyzeConversationSegments };

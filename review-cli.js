@@ -403,6 +403,10 @@ function cardText(it, i, n, code) {
   const src = it.device_person || (it.source === 'field_capture' ? 'field capture' : (it.source || 'recording'));
   const date = String(it.recording_date || it.created_at || '').slice(0, 10) || '?';
   L.push(`🎙 ${clean(src, 30)} · ${date}`);
+  // When a recording covered several jobs, this card is one slice of it.
+  if (it.segment_count && it.segment_count > 1) {
+    L.push(`🧩 _Job ${(it.segment_index || 0) + 1} of ${it.segment_count} in one recording${it.segment_topic ? ` · ${clean(it.segment_topic, 28)}` : ''}_`);
+  }
   L.push(`Confidence: ${clean(it.confidence || '?', 12)} · bucket: ${clean(String(it.bucket || '?').replace(/_/g, ' '), 16)}`);
   const sig = it.signals || {};
   L.push(`Signals: device ${clean(sig.device || '—', 16)} · content ${clean(sig.content || '—', 16)}${sig.content_confidence ? ` (${clean(sig.content_confidence, 8)})` : ''} · voice ${sig.voice ? '✓' : '—'}`);
