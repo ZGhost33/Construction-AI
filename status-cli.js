@@ -19,6 +19,8 @@ const QUEUE = path.join(DIR, 'review-queue.json');
 const LEDGER = path.join(DIR, 'commitments.json');
 const PROCESSED = path.join(DIR, 'processed_recordings.json');
 const CAPTURE = path.join(DIR, 'capture-queue.json');
+let jobctx = null;
+try { jobctx = require('./job-context.js'); } catch { /* optional until §3 lands */ }
 
 function readJSON(p, fallback) { try { return JSON.parse(fs.readFileSync(p, 'utf8')); } catch { return fallback; } }
 function todayStr() { return new Date().toISOString().slice(0, 10); }
@@ -71,6 +73,22 @@ function cmdStatus() {
     const m = fs.statSync(PROCESSED).mtime;
     L.push(`🎙 Last ingest activity: ${ago(m)}`);
   } catch { L.push('🎙 Last ingest activity: unknown'); }
+
+  // Active jobs in their current state (§3 read-back) — most-recently-updated
+  // first, compact one line each. The full per-job view is the morning digest.
+  const jobs = (jobctx ? jobctx.list() : [])
+    .filter(j => j.state_count > 0 || j.phase)
+    .sort((a, b) => String((b.last_updated || {}).date || '').localeCompare(String((a.last_updated || {}).date || '')));
+  if (jobs.length) {
+    L.push('');
+    L.push(`🏗 *Active jobs: ${jobs.length}*`);
+    for (const j of jobs.slice(0, 6)) {
+      const ctx = jobctx.get(j.job_id);
+      const line = ctx ? jobctx.summaryLine(ctx) : '';
+      L.push(`• ${clean(j.client || ('job #' + j.job_id), 24)}${j.job ? ` _(${clean(j.job, 20)})_` : ''}${line ? ` — ${clean(line, 60)}` : ''}`);
+    }
+    if (jobs.length > 6) L.push(`  _…and ${jobs.length - 6} more_`);
+  }
 
   outJSON({ ok: true, parse_mode: 'Markdown', text: L.join('\n'),
     reply_markup: entryButtons(pending, open.length) });

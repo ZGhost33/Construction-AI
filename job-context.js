@@ -113,6 +113,22 @@ function applyUpdate(jobId, p) {
 }
 
 function get(jobId) { return load()[String(jobId)] || null; }
+
+// All job contexts for a client (read-back, e.g. on an intake card).
+function byClient(clientName) {
+  const want = norm(clientName);
+  if (!want) return [];
+  return Object.values(load()).filter(c => norm(c.client) === want);
+}
+
+// Compact one-line state for a job: "paint · drywall complete; painters Thu".
+// Uses the most-recently-touched state items (pushed to the end on update).
+function summaryLine(ctx, maxItems = 2) {
+  const top = (ctx.state || []).slice(-maxItems).map(s => `${s.element} ${s.status}`.trim()).filter(Boolean).join('; ');
+  const phase = ctx.phase || '';
+  return [phase, top].filter(Boolean).join(' · ');
+}
+
 function list() {
   const all = load();
   return Object.values(all).map(c => ({
@@ -149,4 +165,4 @@ function render(ctx) {
   return L.join('\n');
 }
 
-module.exports = { applyUpdate, get, list, render, load, newContext, norm };
+module.exports = { applyUpdate, get, list, byClient, summaryLine, render, load, newContext, norm };
