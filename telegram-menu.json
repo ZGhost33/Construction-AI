@@ -30,6 +30,11 @@
       "cmd": "today",
       "desc": "📅 Today — due and overdue tasks",
       "handler": { "type": "render", "cli": "status-cli.js", "args": ["today"] }
+    },
+    {
+      "cmd": "observe",
+      "desc": "🔭 Observation log — what the agent has noticed",
+      "handler": { "type": "render", "cli": "inference-cli.js", "args": ["observe"] }
     }
   ]
 }

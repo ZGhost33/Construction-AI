@@ -404,4 +404,32 @@ RULES:
   };
 }
 
-module.exports = { analyzeTranscript, analyzeConversation, analyzeConversationSegments, extractJobState };
+// ── Inferred state change (Intelligent Jobs §4.1) ─────────────────────────────
+// Given a job's STATED current state + schedule + a newly approved note, flag
+// changes the note LIKELY IMPLIES but did not state outright (painters on site
+// ⇒ drywall probably done). Conservative; reasons only from stated state +
+// schedule + this note — never chains off another inference. Returns candidates,
+// never a write.
+async function inferStateChange(apiKey, business, ctx, noteText) {
+  const client = getClient(apiKey);
+  const stateLines = (ctx.state || []).map(s => `- ${s.element}: ${s.status}`).join('\n') || '(no prior state)';
+  const schedLines = (ctx.schedule_phases || []).map(p => `- wk${p.week} ${p.phase}`).join('\n') || '(no schedule on file)';
+  const sys = `You watch one construction job's state for ${business.name} and flag changes a new note LIKELY IMPLIES but did not say outright.
+Return ONLY valid JSON — no fences:
+{ "inferences": [ { "element": "<existing state element>", "implication": "<what likely changed, e.g. drywall likely complete>", "because": "<the clue in the note + the schedule/dependency logic>", "confidence": "high|medium|low" } ] }
+RULES:
+- Flag ONLY a change the note IMPLIES but does NOT state. Facts the note states directly are already captured — do not restate them.
+- Classic case: "painters on site" + schedule puts drywall before paint + drywall was "in progress" ⇒ infer drywall likely complete.
+- Be conservative. If nothing is logically implied, return an empty array. A false "done" is worse than a miss.
+- Reason ONLY from the stated current state + schedule + this note. Never chain off another inference.`;
+  const msg = `JOB: ${ctx.job || '?'} for ${ctx.client || '?'}\n\nCURRENT STATE (stated):\n${stateLines}\n\nSCHEDULE PHASES:\n${schedLines}\n\nNEW APPROVED NOTE:\n${noteText}`;
+  const response = await client.messages.create({
+    model: MODEL, max_tokens: 1024,
+    system: [{ type: 'text', text: sys }],
+    messages: [{ role: 'user', content: msg }],
+  });
+  const parsed = parseAnalysis(response.content[0]?.text || '');
+  return Array.isArray(parsed.inferences) ? parsed.inferences : [];
+}
+
+module.exports = { analyzeTranscript, analyzeConversation, analyzeConversationSegments, extractJobState, inferStateChange };

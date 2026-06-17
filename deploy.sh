@@ -104,6 +104,9 @@ RSYNC_EXCLUDES=(
   --exclude 'job-context.json'
   --exclude 'job-context.json.lock'
   --exclude 'job-context.json.tmp-*'
+  --exclude 'inference-log.json'
+  --exclude 'inference-log.json.lock'
+  --exclude 'inference-log.json.tmp-*'
   --exclude 'deployments.json'
   --exclude 'PIPELINE_CONTEXT.md'
 )

@@ -18,7 +18,7 @@
 
 const fs = require('fs');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawn } = require('child_process');
 
 const DIR = '/root/construction-bi-pipeline';
 const QUEUE = path.join(DIR, 'review-queue.json');
@@ -27,6 +27,7 @@ const NODE = '/root/.hermes/node/bin/node';
 const JOBBER = path.join(DIR, 'jobber-cli.js');
 const DRIVE = path.join(DIR, 'drive-cli.js');
 const JOBCTX = path.join(DIR, 'job-context-cli.js');
+const INFCLI = path.join(DIR, 'inference-cli.js');
 let jobctx = null;
 try { jobctx = require('./job-context.js'); } catch { /* optional */ }
 const COMMITMENTS = path.join(DIR, 'commitments.json');
@@ -326,6 +327,14 @@ function cmdApprove(ref, flags) {
       it.context_error = (err.stderr || err.message || '').toString().slice(0, 300);
       // Quiet by default — context is the agent's memory, not a user deliverable.
     }
+    // Inferred-state check (§4.1), DETACHED so it never slows the approve tap.
+    // Observation mode: it only logs candidates to the inference log; nothing
+    // surfaces or writes state. Fire-and-forget — review-cli exits without it.
+    try {
+      const child = spawn(NODE, [INFCLI, 'infer-on-approve', '--job', jobNum, '--client', canonical, '--note', noteText],
+        { detached: true, stdio: 'ignore' });
+      child.unref();
+    } catch { /* best-effort */ }
   }
 
   // Log the receipt expense (note already posted; failure here is non-fatal).

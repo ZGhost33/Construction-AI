@@ -30,6 +30,7 @@ leaderboard-archive.json
 contacts.json
 new-client-drafts.json
 job-context.json
+inference-log.json
 
 # Dependencies
 node_modules/

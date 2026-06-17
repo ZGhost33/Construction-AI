@@ -96,6 +96,13 @@
             "Manager",
             "Supervisor"
           ]
+        },
+        "inference": {
+          "mode": "observation",
+          "sensitivity": "chatty",
+          "daily_cap": 30,
+          "quiet_days": 7,
+          "bottleneck": 3
         }
       }
     }
