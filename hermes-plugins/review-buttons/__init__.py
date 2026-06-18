@@ -40,15 +40,19 @@ GMAIL_CLI = REPO_DIR + "/gmail-cli.js"
 CLIENT_CLI = REPO_DIR + "/client-cli.js"
 MENU_MANIFEST = REPO_DIR + "/telegram-menu.json"
 
-# Map a manifest cli filename to its absolute path (single source of truth for
-# both menu dispatch and the smoke-test parity check).
-_CLI_BY_FILE = {
-    "review-cli.js": REVIEW_CLI,
-    "commit-cli.js": COMMIT_CLI,
-    "status-cli.js": STATUS_CLI,
-    "gmail-cli.js": GMAIL_CLI,
-    "client-cli.js": CLIENT_CLI,
-}
+import os as _os
+import re as _re
+
+# Resolve a manifest 'cli' filename to its absolute path under the repo. No
+# hardcoded allow-list: any *-cli.js the manifest names is dispatchable, so a
+# new menu command can't be "registered but unresolved" (the /observe bug).
+# The filename is from the committed manifest, not user input; still restricted
+# to a safe basename and required to exist on disk.
+def _resolve_cli(name):
+    if not name or not _re.fullmatch(r"[a-z0-9][a-z0-9._-]*\.js", str(name)):
+        return None
+    p = _os.path.join(REPO_DIR, name)
+    return p if _os.path.isfile(p) else None
 
 _VALID_ID_CHARS = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_")
 _VALID_FILTER = {"a", "u", "l"}  # card-cycler filter codes (all / unknown / low-conf)
@@ -758,7 +762,7 @@ async def _handle_menu_command(adapter, msg, handler) -> None:
         return
 
     # 'render': run the manifest's cli+args and post the JSON payload.
-    cli = _CLI_BY_FILE.get(handler.get("cli", ""))
+    cli = _resolve_cli(handler.get("cli", ""))
     if not cli:
         await msg.reply_text("Couldn't render — try again.")
         return
