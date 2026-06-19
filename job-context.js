@@ -116,6 +116,12 @@ function applyUpdate(jobId, p) {
 
 function get(jobId) { return load()[String(jobId)] || null; }
 
+// Record the Drive-mirror sync state (file id + content hash) so the sync skips
+// unchanged jobs. Locked, like every other write.
+function setDriveSync(jobId, info) {
+  return withJob(String(jobId), (ctx) => { ctx.drive_doc = { ...info, synced_at: new Date().toISOString() }; });
+}
+
 // All job contexts for a client (read-back, e.g. on an intake card).
 function byClient(clientName) {
   const want = norm(clientName);
@@ -175,8 +181,10 @@ function render(ctx) {
   L.push('TIMELINE (recent)');
   for (const t of (ctx.timeline || []).slice(-12)) L.push(`  - ${t.date}: ${t.event}`);
   L.push('');
-  L.push(`(Hermes working memory — Jobber remains the system of record. Updated ${ctx.updated_at || '?'}.)`);
+  // Footer uses the stable last-update DATE (not updated_at) so the Drive-mirror
+  // content hash only changes on real state changes, not on every sync write.
+  L.push(`(Hermes working memory — Jobber remains the system of record. Last update ${(ctx.last_updated || {}).date || '?'}.)`);
   return L.join('\n');
 }
 
-module.exports = { applyUpdate, get, list, byClient, summaryLine, render, load, newContext, norm };
+module.exports = { applyUpdate, get, list, byClient, summaryLine, render, setDriveSync, load, newContext, norm };
