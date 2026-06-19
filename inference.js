@@ -60,8 +60,10 @@ function add(candidates) {
       const cand = {
         id: 'inf_' + require('crypto').randomBytes(4).toString('hex'),
         type: c.type || 'proactive',          // 'inferred-update' | 'proactive'
+        kind: c.kind || null,                  // proactive: stall | quiet | bottleneck
         job_id: c.job_id || null,
         client: c.client || null,
+        person: c.person || null,              // bottleneck: the resource everyone waits on
         text: String(c.text).slice(0, 300),
         detail: c.detail ? String(c.detail).slice(0, 400) : null,
         element: c.element || null,            // for inferred-update: the state element
