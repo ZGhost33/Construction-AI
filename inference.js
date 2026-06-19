@@ -64,10 +64,12 @@ function add(candidates) {
         client: c.client || null,
         text: String(c.text).slice(0, 300),
         detail: c.detail ? String(c.detail).slice(0, 400) : null,
+        element: c.element || null,            // for inferred-update: the state element
+        implication: c.implication || null,    // …and its implied new status
         basis: 'INFERRED',
         confidence: c.confidence || 'medium',
         dedupe: c.dedupe || null,
-        status: 'observed',                    // observation mode: never 'live'
+        status: 'observed',                    // 'observed' | 'confirmed' | 'rejected'
         created_at: new Date().toISOString(),
         date: today(),
       };
@@ -85,5 +87,20 @@ function add(candidates) {
 
 function openCandidates() { return load().candidates.filter(c => c.status === 'observed'); }
 function since(dateStr) { return openCandidates().filter(c => String(c.date) >= dateStr); }
+function get(id) { return load().candidates.find(c => c.id === id) || null; }
 
-module.exports = { add, load, openCandidates, since, today };
+// Resolve a candidate (confirmed/rejected) — used by the live confirm cards.
+function setStatus(id, status, by) {
+  return withLock(() => {
+    const store = load();
+    const c = store.candidates.find(x => x.id === id);
+    if (!c) return null;
+    c.status = status;                 // 'confirmed' | 'rejected'
+    c.resolved_at = new Date().toISOString();
+    c.resolved_by = by || null;
+    saveAtomic(store);
+    return c;
+  });
+}
+
+module.exports = { add, load, openCandidates, since, get, setStatus, today };
