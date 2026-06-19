@@ -26,7 +26,9 @@ const MANIFEST = path.join(__dirname, 'telegram-menu.json');
 
 function loadCommands() {
   const m = JSON.parse(fs.readFileSync(MANIFEST, 'utf8'));
-  return (m.commands || []).map(c => ({ command: c.cmd, description: c.desc }));
+  // hidden commands (e.g. owner-only /usage) are dispatchable + parity-tested
+  // but kept out of the visible menu so the crew never sees them advertised.
+  return (m.commands || []).filter(c => !c.hidden).map(c => ({ command: c.cmd, description: c.desc }));
 }
 const COMMANDS = loadCommands();
 

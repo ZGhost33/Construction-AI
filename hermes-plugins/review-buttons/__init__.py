@@ -825,7 +825,13 @@ async def _handle_menu_command(adapter, msg, handler) -> None:
     if not cli:
         await msg.reply_text("Couldn't render — try again.")
         return
-    payload = await asyncio.to_thread(_run_cli_json, cli, list(handler.get("args", [])))
+    args = list(handler.get("args", []))
+    # owner-only commands (e.g. /usage) get the caller's name so the CLI can
+    # gate access — private metrics never render for a non-owner.
+    if handler.get("owner_only"):
+        from_user = getattr(msg, "from_user", None)
+        args += ["--caller", str(getattr(from_user, "first_name", "") or getattr(from_user, "id", "") or "")]
+    payload = await asyncio.to_thread(_run_cli_json, cli, args)
     if not payload:
         await msg.reply_text("Couldn't render — try again.")
         return
@@ -912,7 +918,8 @@ def _install_text_wrap() -> bool:
 # source function instead means Hermes itself registers our items, in every
 # scope, on every boot — genuinely self-healing.
 def _work_menu():
-    return [(c["cmd"], c.get("desc", c["cmd"])) for c in _load_menu() if c.get("cmd")]
+    # hidden commands stay dispatchable but out of the registered/visible menu.
+    return [(c["cmd"], c.get("desc", c["cmd"])) for c in _load_menu() if c.get("cmd") and not c.get("hidden")]
 
 
 def _install_menu_wrap() -> bool:

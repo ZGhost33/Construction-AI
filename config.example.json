@@ -74,6 +74,7 @@
         "default_sender": "george"
       },
       "telegram_ui": {
+        "owner": "Owner First Name",
         "review": {
           "default_filter": "a"
         },

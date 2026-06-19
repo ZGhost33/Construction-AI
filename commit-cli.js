@@ -605,10 +605,10 @@ function homePayload() {
   const df = tfcode(((uiCfg().tasks || {}).default_filter || 'a'));
   const rows = [];
   if (open.length) rows.push([{ text: '📋 Work through them →', callback_data: `tk:card:${df}:first` }]);
-  rows.push([
-    { text: '🗂 Register', callback_data: 'tk:reg:a:0:first' },
-    { text: '🏆 Leaderboard', callback_data: 'tk:lb:a:first' },
-  ]);
+  // No competitive leaderboard button (§5) — a visible ranking creates bad
+  // incentives. Register (the completed-task log) stays; usage metrics are a
+  // private owner-only digest (/usage), not a public scoreboard.
+  rows.push([{ text: '🗂 Register', callback_data: 'tk:reg:a:0:first' }]);
   return { ok: true, parse_mode: 'Markdown', text: lines.join('\n'),
     reply_markup: { inline_keyboard: rows } };
 }
@@ -710,6 +710,65 @@ function leaderboardPayload() {
     reply_markup: { inline_keyboard: [[{ text: '⬅ Back', callback_data: 'tk:home:a:first' }]] } };
 }
 
+// ── Private usage digest (§5 — replaces the visible leaderboard) ──────────────
+const REVIEW_QUEUE = path.join(DIR, 'review-queue.json');
+const INFLOG = path.join(DIR, 'inference-log.json');
+function ownerName() { try { return ((biz().telegram_ui || {}).owner) || null; } catch { return null; } }
+function nameMatch(a, b) { const x = norm(a), y = norm(b); return !!x && !!y && (x === y || x.includes(y) || y.includes(x)); }
+
+// Owner-only, private to Luis: per-person ENGAGEMENT metrics (activity with
+// Hermes), explicitly NOT a competitive scoreboard and NOT a measure of field
+// work. Logs honestly (who recorded / closed / confirmed) so the owner can
+// reward quietly on his own judgement. Lazily archives past months.
+function cmdUsage(f) {
+  const owner = ownerName();
+  const caller = (f.caller || '').trim();
+  if (owner && caller && !nameMatch(owner, caller)) {
+    outJSON({ ok: true, parse_mode: 'Markdown', text: '🔒 *Usage metrics are private to the owner.*' });
+    return;
+  }
+  const month = todayStr().slice(0, 7);
+  const l = loadLedger();
+
+  // lazy-archive prior months' completion standings (history preserved even
+  // though the visible leaderboard is gone)
+  try {
+    let archive; try { archive = JSON.parse(fs.readFileSync(ARCHIVE, 'utf8')); } catch { archive = {}; }
+    const past = [...new Set(l.filter(x => x.status === 'done' && x.done_at).map(x => monthOf(x.done_at)))].filter(m => m && m < month);
+    let changed = false;
+    for (const m of past) if (!archive[m]) { archive[m] = Object.fromEntries(standingsFor(l, m)); changed = true; }
+    if (changed) fs.writeFileSync(ARCHIVE, JSON.stringify(archive, null, 2));
+  } catch { /* archive is best-effort */ }
+
+  const per = {};
+  // canonicalize names through the roster so "Luis"/"Luis Canuto" (device vs
+  // completed_by) merge into one person.
+  const bump = (raw, key, by = 1) => { if (!raw) return; const name = resolvePersonLenientName(raw); const k = norm(name); const p = per[k] = per[k] || { name, recordings: 0, closed: 0, delegated: 0, confirms: 0 }; p[key] += by; };
+  let q = []; try { q = JSON.parse(fs.readFileSync(REVIEW_QUEUE, 'utf8')); } catch {}
+  for (const it of q) { if (String(it.created_at || '').slice(0, 7) === month) bump(it.device_person || (it.signals && it.signals.device), 'recordings'); }
+  for (const it of l) {
+    if (it.status === 'done' && monthOf(it.done_at) === month && it.completed_by) bump(it.completed_by, 'closed');
+    if (it.delegated_by && monthOf(it.created_at) === month) bump(it.delegated_by, 'delegated');
+  }
+  try { const inf = JSON.parse(fs.readFileSync(INFLOG, 'utf8')); for (const c of (inf.candidates || [])) if (c.status === 'confirmed' && String(c.resolved_at || '').slice(0, 7) === month && c.resolved_by) bump(c.resolved_by, 'confirms'); } catch {}
+
+  const people = Object.values(per).sort((a, b) => (b.recordings + b.closed + b.delegated + b.confirms) - (a.recordings + a.closed + a.delegated + a.confirms));
+  const L = [`🔒 *Usage — ${monthLabel(month)}* _(private to you)_`, ''];
+  if (!people.length) L.push('_No activity recorded yet this month._');
+  for (const p of people) {
+    const bits = [];
+    if (p.recordings) bits.push(`🎙 ${p.recordings}`);
+    if (p.closed) bits.push(`✅ ${p.closed}`);
+    if (p.delegated) bits.push(`👤 ${p.delegated}`);
+    if (p.confirms) bits.push(`🤔 ${p.confirms}`);
+    L.push(`*${tclean(p.name, 28)}* — ${bits.join(' · ') || '—'}`);
+  }
+  L.push('', '🎙 recordings · ✅ tasks closed · 👤 delegated · 🤔 inferences confirmed');
+  L.push('', '_⚠️ Engagement only — this counts activity *with Hermes*, not hands-on field work (which Hermes only knows secondhand through what gets recorded). Don\'t make it the sole basis for recognition._');
+  L.push('_Private to you · resets monthly · prior months archived._');
+  outJSON({ ok: true, parse_mode: 'Markdown', text: L.join('\n') });
+}
+
 // 🗑 on the task card: cancel (not done) — leaves the Register and the
 // leaderboard untouched, for system-generated tasks that aren't real work.
 function cmdTaskSetClient(f) {
@@ -777,6 +836,7 @@ function main() {
     // ── card cycler (JSON out; consumed by the review-buttons plugin) ─────────
     case 'card': return outJSON(taskCardPayload(f.at || 'first', f.move || 'here', f.f, f.op));
     case 'home': return outJSON(homePayload());
+    case 'usage': return cmdUsage(f);
     case 'register': return outJSON(registerPayload(f.page));
     case 'leaderboard': return outJSON(leaderboardPayload());
     case 'filter-menu': return outJSON(taskFilterMenuPayload(f.id, f.f));

@@ -35,6 +35,12 @@
       "cmd": "observe",
       "desc": "🔭 Observation log — what the agent has noticed",
       "handler": { "type": "render", "cli": "inference-cli.js", "args": ["observe"] }
+    },
+    {
+      "cmd": "usage",
+      "desc": "🔒 Usage — private owner digest",
+      "hidden": true,
+      "handler": { "type": "render", "cli": "commit-cli.js", "args": ["usage"], "owner_only": true }
     }
   ]
 }
