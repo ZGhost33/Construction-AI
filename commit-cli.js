@@ -476,6 +476,18 @@ function openItem(l, id) {
   const it = l.find(x => x.id === id);
   return it && it.status === 'open' ? it : null;
 }
+// The card to land on after the current item leaves the cycler view (Done /
+// Dismiss / Snooze). Computed from the CURRENT view, BEFORE the mutation, so we
+// advance to the genuine next card by the cycler's own order — never bounce to
+// the first card (which happened when due-date fallback matched index 0).
+// Returns 'first' only when the acted-on item was the last one in the view.
+function nextIdAfter(view, id) {
+  const pos = view.findIndex(x => x.id === id);
+  if (pos < 0) return null;
+  if (pos < view.length - 1) return view[pos + 1].id; // the next card forward
+  if (pos > 0) return view[pos - 1].id;                // was last → step back
+  return null;                                         // was the only card
+}
 function staleCardPayload(id, code, op) {
   const pay = taskCardPayload(id, 'here', code, op);
   pay.answer = 'Task already closed.';
@@ -486,10 +498,12 @@ function cmdTaskDone(f) {
   const l = loadLedger();
   const it = openItem(l, f.id);
   if (!it) { outJSON(staleCardPayload(f.id, f.f, f.op)); return; }
+  const code = tfcode(f.f);
+  const nextId = nextIdAfter(cyclerView(l, code, f.op), it.id);
   it.status = 'done'; it.done_at = new Date().toISOString();
   if (f.by) it.completed_by = resolvePersonLenientName(f.by);
   saveLedger(l);
-  const pay = taskCardPayload(it.id, 'here', tfcode(f.f), f.op);
+  const pay = taskCardPayload(nextId || 'first', 'here', code, f.op);
   pay.answer = `✅ Done${it.completed_by ? ' — ' + it.completed_by : ''}`;
   outJSON(pay);
 }
@@ -650,12 +664,14 @@ function cmdTaskDismiss(f) {
   const l = loadLedger();
   const it = openItem(l, f.id);
   if (!it) { outJSON(staleCardPayload(f.id, f.f, f.op)); return; }
+  const code = tfcode(f.f);
+  const nextId = nextIdAfter(cyclerView(l, code, f.op), it.id);
   it.status = 'cancelled';
   it.done_at = new Date().toISOString();
   const by = f.by ? resolvePersonLenientName(f.by) : null;
   it.note = (it.note ? it.note + ' | ' : '') + `dismissed via Telegram${by ? ' by ' + by : ''}`;
   saveLedger(l);
-  const pay = taskCardPayload(it.id, 'here', tfcode(f.f), f.op);
+  const pay = taskCardPayload(nextId || 'first', 'here', code, f.op);
   pay.answer = '🗑 Dismissed';
   outJSON(pay);
 }
@@ -666,10 +682,12 @@ function cmdTaskSnooze(f) {
   if (!it) { outJSON(staleCardPayload(f.id, f.f, f.op)); return; }
   const days = Math.min(Math.max(1, parseInt(f.days, 10) || 1), 30);
   const until = parseDue(`+${days}d`);
+  const code = tfcode(f.f);
+  const nextId = nextIdAfter(cyclerView(l, code, f.op), it.id);
   it.snooze_until = until;
   saveLedger(l);
-  // snoozed item leaves the cycler view → payload advances to the next task
-  const pay = taskCardPayload(it.id, 'here', tfcode(f.f), f.op);
+  // snoozed item leaves the cycler view → advance to the genuine next task
+  const pay = taskCardPayload(nextId || 'first', 'here', code, f.op);
   pay.answer = `😴 Snoozed until ${until}`;
   outJSON(pay);
 }
