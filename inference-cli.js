@@ -81,6 +81,7 @@ async function cmdInferOnApprove(f) {
       type: 'inferred-update', job_id: job, client: ctx.client || f.client || null,
       text: `${ctx.client || 'Job #' + job}: ${x.implication}`,
       detail: x.because || null, confidence: x.confidence || 'medium',
+      element: x.element || null, implication: x.implication,
       dedupe: `${x.element || ''}:${x.implication}`,
     }));
   const n = inf.add(cands);
@@ -138,9 +139,99 @@ function cmdSweep() {
   console.log(`🔭 sweep: ${n} new proactive candidate(s) logged (mode: ${d.mode}, sensitivity: ${d.sensitivity}).`);
 }
 
-// ── observe: the digest the owner skims (/observe + daily push) ───────────────
+// ── live confirm cards (§4 live) ──────────────────────────────────────────────
+function infList() { return inf.openCandidates().sort((a, b) => String(a.created_at).localeCompare(String(b.created_at))); }
+function nextInfId(list, id) {
+  const pos = list.findIndex(x => x.id === id);
+  if (pos < 0) return null;
+  if (pos < list.length - 1) return list[pos + 1].id;
+  if (pos > 0) return list[pos - 1].id;
+  return null;
+}
+function infCardText(c, i, n) {
+  const isUpd = c.type === 'inferred-update';
+  const L = [`${isUpd ? '🤔' : '💡'} *${isUpd ? 'Inferred update' : 'Proactive'} ${i + 1} of ${n}*`];
+  const head = `${c.client || ''}${c.job_id ? ' (job #' + c.job_id + ')' : ''}`.trim();
+  if (head) L.push(head);
+  L.push('', clean(c.text, 200));
+  if (c.detail) { L.push('', `_${clean(c.detail, 200)}_`); }
+  L.push('', isUpd ? 'Confirm this update to the job?' : 'Useful?');
+  return L.join('\n');
+}
+function infCardKeyboard(c, i, n) {
+  return { inline_keyboard: [
+    [
+      { text: '✅ Confirm', callback_data: `if:accept:${c.id}` },
+      { text: '❌ Dismiss', callback_data: `if:reject:${c.id}` },
+      { text: '⏭ Skip', callback_data: `if:skip:${c.id}` },
+    ],
+    [
+      { text: i > 0 ? '◀' : '·', callback_data: i > 0 ? `if:prev:${c.id}` : 'if:noop' },
+      { text: `${i + 1}/${n}`, callback_data: 'if:noop' },
+      { text: i < n - 1 ? '▶' : '·', callback_data: i < n - 1 ? `if:next:${c.id}` : 'if:noop' },
+    ],
+  ] };
+}
+function infEmptyPayload() {
+  return { ok: true, empty: true, parse_mode: 'Markdown', reply_markup: null,
+    text: '🔭 *Observation log clear* — nothing to review right now.' };
+}
+function infCardPayload(at, move) {
+  const list = infList();
+  if (!list.length) return infEmptyPayload();
+  let idx = 0, answer = null;
+  if (at && at !== 'first') {
+    const pos = list.findIndex(x => x.id === at);
+    idx = pos < 0 ? 0 : pos;
+    if (pos < 0) move = 'here';
+  }
+  if (move === 'next') { if (idx < list.length - 1) idx++; else answer = 'End of list.'; }
+  else if (move === 'prev') { if (idx > 0) idx--; else answer = 'Start of list.'; }
+  const c = list[idx];
+  const pay = { ok: true, empty: false, parse_mode: 'Markdown', id: c.id,
+    text: infCardText(c, idx, list.length), reply_markup: infCardKeyboard(c, idx, list.length) };
+  if (answer) pay.answer = answer;
+  return pay;
+}
+
+function cmdInfCard(f) { outJSON(infCardPayload(f.at || 'first', f.move || 'here')); }
+
+function cmdInfAccept(f) {
+  const c = inf.get(f.id);
+  if (!c || c.status !== 'observed') { const p = infCardPayload(f.id, 'here'); p.answer = 'Already handled.'; outJSON(p); return; }
+  const nextId = nextInfId(infList(), f.id);
+  // Inferred-update: write the now-confirmed state into the job context. It
+  // becomes a confirmed fact (basis INFERRED, confirmed:true) — which is allowed
+  // to inform future inference, unlike an unconfirmed one. Proactive: just close.
+  if (c.type === 'inferred-update' && c.job_id && c.element) {
+    try {
+      jc.applyUpdate(c.job_id, {
+        stateItems: [{ element: c.element, status: c.implication || c.text, basis: 'INFERRED', confirmed: true }],
+        timelineEvent: `Confirmed via inference${f.op ? ' by ' + f.op : ''}: ${c.implication || c.text}`,
+        source: 'inference', by: f.op || null,
+      });
+    } catch (e) { /* non-fatal */ }
+  }
+  inf.setStatus(f.id, 'confirmed', f.op);
+  const pay = infCardPayload(nextId || 'first', 'here');
+  pay.answer = c.type === 'inferred-update' ? '✅ Confirmed — job state updated' : '✅ Got it';
+  outJSON(pay);
+}
+
+function cmdInfReject(f) {
+  const c = inf.get(f.id);
+  if (!c || c.status !== 'observed') { const p = infCardPayload(f.id, 'here'); p.answer = 'Already handled.'; outJSON(p); return; }
+  const nextId = nextInfId(infList(), f.id);
+  inf.setStatus(f.id, 'rejected', f.op);
+  const pay = infCardPayload(nextId || 'first', 'here');
+  pay.answer = '❌ Dismissed';
+  outJSON(pay);
+}
+
+// ── observe: digest (observation mode) or the first confirm card (live) ───────
 function cmdObserve() {
   const d = dial();
+  if (d.mode === 'live') { outJSON(infCardPayload('first', 'here')); return; }
   const cands = inf.openCandidates().sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
   const updates = cands.filter(c => c.type === 'inferred-update');
   const proactive = cands.filter(c => c.type === 'proactive');
@@ -159,7 +250,7 @@ function cmdObserve() {
     L.push('', `💡 *Proactive (${proactive.length})*`);
     proactive.slice(0, cap).forEach(c => L.push(`• ${clean(c.text, 90)}`));
   }
-  L.push('', '_Observation mode: these are candidates, not acted on. When they read useful, say the word and I\'ll flip the dial to live cards._');
+  L.push('', '_Observation mode: candidates, not acted on. Say the word to flip the dial to live confirm cards._');
   outJSON({ ok: true, parse_mode: 'Markdown', text: L.join('\n'), reply_markup: null });
 }
 
@@ -172,6 +263,9 @@ async function main() {
     case 'infer-on-approve': return cmdInferOnApprove(f);
     case 'sweep': return cmdSweep();
     case 'observe': return cmdObserve();
+    case 'card': return cmdInfCard(f);
+    case 'accept': return cmdInfAccept(f);
+    case 'reject': return cmdInfReject(f);
     case 'config': return cmdConfig();
     default:
       console.log('inference-cli.js (§4 observation mode)\n  infer-on-approve --job N --client ".." --note ".."\n  sweep\n  observe\n  config');

@@ -42,11 +42,14 @@ async function main() {
   const out = execFileSync(NODE, [INFCLI, 'observe'], { encoding: 'utf8', timeout: 30000 });
   const payload = JSON.parse(out.trim().split('\n').pop());
 
-  // 3. only push when there's something worth reading
-  if (/Nothing noticed yet/.test(payload.text || '')) { console.log('nothing to push today'); return; }
+  // 3. only push when there's something worth reading (empty card / empty digest)
+  if (payload.empty || /Nothing noticed yet/.test(payload.text || '')) { console.log('nothing to push today'); return; }
 
   await axios.post(`https://api.telegram.org/bot${token}/sendMessage`, {
     chat_id: chatId, text: payload.text, parse_mode: payload.parse_mode || 'Markdown',
+    // In live mode observe returns the first confirm card — carry its buttons so
+    // the push is actionable. In observation mode reply_markup is null.
+    ...(payload.reply_markup ? { reply_markup: payload.reply_markup } : {}),
   }, { timeout: 10000 });
   console.log('observation digest pushed to ' + chatId);
 }

@@ -38,6 +38,7 @@ COMMIT_CLI = REPO_DIR + "/commit-cli.js"
 STATUS_CLI = REPO_DIR + "/status-cli.js"
 GMAIL_CLI = REPO_DIR + "/gmail-cli.js"
 CLIENT_CLI = REPO_DIR + "/client-cli.js"
+INFERENCE_CLI = REPO_DIR + "/inference-cli.js"
 MENU_MANIFEST = REPO_DIR + "/telegram-menu.json"
 
 import os as _os
@@ -141,6 +142,10 @@ async def _gmail_cli_json(args: list):
 
 async def _client_cli_json(args: list):
     return await asyncio.to_thread(_run_cli_json, CLIENT_CLI, args)
+
+
+async def _inference_cli_json(args: list):
+    return await asyncio.to_thread(_run_cli_json, INFERENCE_CLI, args)
 
 
 # ── bot-menu manifest (single source of truth, shared with telegram-menu.js) ──
@@ -725,6 +730,47 @@ async def _handle_newclient_callback(adapter, query, data: str) -> None:
     await query.answer(text="Unknown action.")
 
 
+def _valid_inf_id(s) -> bool:
+    """inf_<8 hex>."""
+    return (isinstance(s, str) and s.startswith("inf_") and 4 <= len(s) <= 24
+            and all(c in _VALID_ID_CHARS for c in s))
+
+
+async def _handle_inference_callback(adapter, query, data: str) -> None:
+    """Route an ``if:`` callback — the §4 live confirm-card cycler.
+
+    Verbs: noop · card/skip/next/prev (navigate) · accept (confirm →
+    job-context update) · reject (dismiss). All best-effort; edits in place.
+    """
+    parts = data.split(":")
+    verb = parts[1] if len(parts) > 1 else ""
+    if verb == "noop":
+        await query.answer()
+        return
+    inf_id = parts[-1] if parts else ""
+    if not _valid_inf_id(inf_id):
+        await query.answer(text="Invalid id.")
+        return
+    authorized, op = _authorize(adapter, query)
+    if not authorized:
+        await query.answer(text="⛔ Not authorized.")
+        return
+    if verb in ("card", "skip", "next"):
+        move = "next" if verb in ("skip", "next") else "here"
+        await _render_in_place(query, await _inference_cli_json(["card", "--at", inf_id, "--move", move]))
+        return
+    if verb == "prev":
+        await _render_in_place(query, await _inference_cli_json(["card", "--at", inf_id, "--move", "prev"]))
+        return
+    if verb == "accept":
+        await _render_in_place(query, await _inference_cli_json(["accept", "--id", inf_id, "--op", op]))
+        return
+    if verb == "reject":
+        await _render_in_place(query, await _inference_cli_json(["reject", "--id", inf_id, "--op", op]))
+        return
+    await query.answer(text="Unknown action.")
+
+
 def _authorize_msg(adapter, msg) -> bool:
     """Authorize a plain message's author via the gateway's callback check
     (same policy surface as button taps)."""
@@ -926,6 +972,8 @@ def _install_wrap() -> bool:
                 return await _handle_tasks_callback(self, query, data)
             if data.startswith("nc:"):
                 return await _handle_newclient_callback(self, query, data)
+            if data.startswith("if:"):
+                return await _handle_inference_callback(self, query, data)
         except Exception:
             # Never let our code break inbound handling — fall through to original.
             logger.exception("review-buttons: rq/tk handler raised; deferring to original")
