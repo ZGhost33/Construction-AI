@@ -12,6 +12,8 @@ const fs = require('fs');
 const path = require('path');
 
 const DIR = '/root/construction-bi-pipeline';
+let jobctx = null;
+try { jobctx = require('./job-context.js'); } catch { /* optional until §3 lands */ }
 const COMMITMENTS = path.join(DIR, 'commitments.json');
 const QUEUE = path.join(DIR, 'review-queue.json');
 
@@ -83,6 +85,31 @@ if (pending.length) {
   if (autoReads.length) {
     const sum = autoReads.reduce((t, x) => t + Number(x.proposed_expense.amount || 0), 0);
     out.push(`  🤖 incl. ${autoReads.length} auto-read receipt${autoReads.length > 1 ? 's' : ''} (~$${sum.toFixed(2)}) to confirm — these are OCR guesses, not yet logged.`);
+  }
+}
+
+// Jobs in progress (§B morning digest) — where each active job stands now, so
+// the brief is forward-looking, not just a task list. Reads the living context
+// files; flags jobs that are past their planned phase or have gone quiet.
+if (jobctx) {
+  const jobs = jobctx.list()
+    .filter(j => j.phase || j.state_count)
+    .map(j => jobctx.get(j.job_id)).filter(Boolean)
+    .sort((a, b) => String((b.last_updated || {}).date || '').localeCompare(String((a.last_updated || {}).date || '')));
+  if (jobs.length) {
+    out.push('', `🏗 *Jobs in progress (${jobs.length})*`);
+    for (const c of jobs.slice(0, 10)) {
+      const sched = c.schedule_ref || {};
+      const lastEnd = (sched.phases || []).map(p => p.end).filter(Boolean).sort().pop();
+      const flags = [];
+      if (lastEnd && lastEnd < today) flags.push(`🔴 ${daysBetween(today, lastEnd)}d past plan`);
+      const lu = (c.last_updated || {}).date;
+      if (lu && daysBetween(today, lu) >= 7) flags.push(`😴 quiet ${daysBetween(today, lu)}d`);
+      const s = jobctx.summaryLine(c);
+      out.push(`  *${c.client || ('job #' + c.job_id)}*${c.phase ? ' — ' + c.phase : ''}${flags.length ? '  ' + flags.join(' · ') : ''}`);
+      if (s) out.push(`     _${s.length > 70 ? s.slice(0, 69) + '…' : s}_`);
+    }
+    if (jobs.length > 10) out.push(`  _…and ${jobs.length - 10} more — */status* for all._`);
   }
 }
 
