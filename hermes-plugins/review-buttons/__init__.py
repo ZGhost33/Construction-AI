@@ -495,6 +495,13 @@ async def _handle_tasks_callback(adapter, query, data: str) -> None:
         page = arg if (arg and arg.isdigit()) else "0"
         await _render_in_place(query, await _commit_cli_json(["delegate-picker", "--id", cm_id, "--f", code, "--page", page]))
         return
+    if verb == "cl":  # fix the task's client → client picker
+        await _render_in_place(query, await _commit_cli_json(["client-picker", "--id", cm_id, "--f", code, "--page", "0"]))
+        return
+    if verb == "pc":  # paginate the client picker
+        page = arg if (arg and arg.isdigit()) else "0"
+        await _render_in_place(query, await _commit_cli_json(["client-picker", "--id", cm_id, "--f", code, "--page", page]))
+        return
     if verb == "home":  # Tasks summary + entry buttons (Back target)
         await _render_in_place(query, await _commit_cli_json(["home"]))
         return
@@ -546,6 +553,12 @@ async def _handle_tasks_callback(adapter, query, data: str) -> None:
             await query.answer(text="Bad selection.")
             return
         await _render_in_place(query, await _commit_cli_json(["tdelegate", "--id", cm_id, "--person", arg, "--by", op, "--f", code, "--op", op]))
+        return
+    if verb == "xc":  # pick the corrected client
+        if not (arg and arg.isdigit()):
+            await query.answer(text="Bad selection.")
+            return
+        await _render_in_place(query, await _commit_cli_json(["tsetclient", "--id", cm_id, "--client", arg, "--f", code, "--op", op]))
         return
     if verb == "sx":
         days = arg if (arg and arg.isdigit()) else "1"

@@ -382,6 +382,7 @@ function taskCardKeyboard(it, i, n, code) {
     ],
     [
       { text: '✉️ Email', callback_data: `tk:em:${code}:${it.id}` },
+      { text: '🏠 Client', callback_data: `tk:cl:${code}:${it.id}` },
       { text: '🗑 Dismiss', callback_data: `tk:del:${code}:${it.id}` },
     ],
     [
@@ -457,6 +458,27 @@ function delegateList() {
     return d.map(x => (typeof x === 'string' ? { name: x } : x)).filter(x => x && x.name);
   }
   return operatorList().map(name => ({ name }));
+}
+
+// Fix a task's client (closed roster). For legacy tasks mis-attributed before
+// §A split multi-client recordings into per-client segments.
+function clientPickerPayload(id, code, page) {
+  code = tfcode(code);
+  const list = clientList();
+  const PER = 8;
+  const pages = Math.max(1, Math.ceil(list.length / PER));
+  const p = Math.min(Math.max(0, parseInt(page, 10) || 0), pages - 1);
+  const slice = list.slice(p * PER, p * PER + PER);
+  const rows = [];
+  for (let i = 0; i < slice.length; i += 2) {
+    rows.push(slice.slice(i, i + 2).map(c => ({ text: tclean(c.name, 24), callback_data: `tk:xc:${code}:${list.indexOf(c)}:${id}` })));
+  }
+  const navrow = [];
+  if (p > 0) navrow.push({ text: '◀', callback_data: `tk:pc:${code}:${p - 1}:${id}` });
+  navrow.push({ text: '⬅ Back', callback_data: `tk:card:${code}:${id}` });
+  if (p < pages - 1) navrow.push({ text: '▶', callback_data: `tk:pc:${code}:${p + 1}:${id}` });
+  rows.push(navrow);
+  return { ok: true, parse_mode: 'Markdown', text: 'Fix the *client* for this task:', reply_markup: { inline_keyboard: rows } };
 }
 
 function delegatePickerPayload(id, code, page) {
@@ -690,6 +712,23 @@ function leaderboardPayload() {
 
 // 🗑 on the task card: cancel (not done) — leaves the Register and the
 // leaderboard untouched, for system-generated tasks that aren't real work.
+function cmdTaskSetClient(f) {
+  const l = loadLedger();
+  const it = openItem(l, f.id);
+  if (!it) { outJSON(staleCardPayload(f.id, f.f, f.op)); return; }
+  const c = clientList()[parseInt(f.client, 10)];
+  if (!c) { outJSON({ ok: false, parse_mode: 'Markdown', text: '❌ Bad selection.', answer: 'Bad selection' }); return; }
+  const prev = it.client || '(none)';
+  it.client = c.name;
+  it.client_corrected = true;
+  if (norm(prev) !== norm(c.name)) it.note = (it.note ? it.note + ' | ' : '') + `client corrected ${prev} → ${c.name}`;
+  saveLedger(l);
+  // re-render the same task (it may shift position under client-sort) in place
+  const pay = taskCardPayload(it.id, 'here', tfcode(f.f), f.op);
+  pay.answer = `🏠 Client → ${c.name}`;
+  outJSON(pay);
+}
+
 function cmdTaskDismiss(f) {
   const l = loadLedger();
   const it = openItem(l, f.id);
@@ -743,6 +782,8 @@ function main() {
     case 'filter-menu': return outJSON(taskFilterMenuPayload(f.id, f.f));
     case 'snooze-menu': return outJSON(snoozeMenuPayload(f.id, f.f));
     case 'delegate-picker': return outJSON(delegatePickerPayload(f.id, f.f, f.page));
+    case 'client-picker': return outJSON(clientPickerPayload(f.id, f.f, f.page));
+    case 'tsetclient': return cmdTaskSetClient(f);
     case 'tdone': return cmdTaskDone(f);
     case 'tdismiss': return cmdTaskDismiss(f);
     case 'tdelegate': return void cmdTaskDelegate(f).catch(e => { outJSON({ ok: false, parse_mode: 'Markdown', text: '❌ ' + e.message, answer: 'Delegate failed' }); });
