@@ -314,12 +314,42 @@ function taskMatchesFilter(it, code, op) {
   if (code === 'm') return isPerson(it.delegated_to || it.who || '', op || '');
   return true; // 'a' = all open
 }
-// Open tasks for the cycler: open status, snoozes respected, defaultView order.
+// Cycler order: 'urgency' (default — overdue first, then due date) or 'client'
+// (group a client's tasks together; the client with the most urgent task comes
+// first, within each client overdue-first). Config: businesses[0].telegram_ui.tasks.sort
+function tasksSortMode() {
+  try { return (((biz().telegram_ui || {}).tasks || {}).sort) === 'client' ? 'client' : 'urgency'; }
+  catch { return 'urgency'; }
+}
+// Lower sorts first: overdue ahead of not, then due date asc (undated last), then created.
+function urgencyKey(it) {
+  return `${isOverdue(it) ? 0 : 1}|${it.due || '9999-99-99'}|${String(it.created_at || '')}`;
+}
+// Re-order an already urgency-sorted list into client groups, each group placed
+// by its most-urgent task; clientless tasks last.
+function groupByClient(items) {
+  const groups = new Map();
+  for (const it of items) {
+    const key = it.client ? norm(it.client) : '~~none';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(it);
+  }
+  for (const arr of groups.values()) arr.sort((a, b) => urgencyKey(a).localeCompare(urgencyKey(b)));
+  const ordered = [...groups.entries()].sort((a, b) => {
+    if (a[0] === '~~none') return 1;
+    if (b[0] === '~~none') return -1;
+    const ak = urgencyKey(a[1][0]), bk = urgencyKey(b[1][0]);
+    return ak !== bk ? ak.localeCompare(bk) : a[0].localeCompare(b[0]);
+  });
+  return ordered.flatMap(([, arr]) => arr);
+}
+// Open tasks for the cycler: open status, snoozes respected, then sorted.
 function cyclerView(ledger, code, op) {
   const t = todayStr();
-  return defaultView(ledger)
+  const items = defaultView(ledger)
     .filter(it => !it.snooze_until || it.snooze_until <= t)
     .filter(it => taskMatchesFilter(it, code, op));
+  return tasksSortMode() === 'client' ? groupByClient(items) : items;
 }
 
 function taskCardText(it, i, n, code) {
