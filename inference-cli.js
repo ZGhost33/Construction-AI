@@ -48,6 +48,33 @@ function passesSensitivity(conf, sensitivity) {
   return true; // chatty
 }
 
+function norm(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').replace(/\s+/g, ' ').trim(); }
+// Operators (the office: Luis/Jorge/Danilo) — their workload is not a
+// "bottleneck", so they're excluded from that signal. Config-driven.
+function operators() {
+  const ui = biz().telegram_ui || {};
+  const ops = (ui.leaderboard || {}).operators;
+  if (Array.isArray(ops) && ops.length) return ops;
+  const senders = (biz().email || {}).senders || {};
+  return Object.keys(senders).map(k => k.charAt(0).toUpperCase() + k.slice(1));
+}
+function isOperator(name) {
+  return operators().some(o => { const a = norm(o), b = norm(name); return !!a && !!b && (a === b || a.includes(b) || b.includes(a)); });
+}
+
+// ACTIONABILITY GATE for proactive cards: a proactive ping may only surface if
+// it names a specific job/client OR a specific bottlenecked resource, AND it's
+// an anomaly/decision (stall / quiet / bottleneck) — never a bare aggregate or
+// count ("you have N tasks"). Aggregates belong in the morning digest.
+function proactiveKind(c) { return c.kind || (c.dedupe || '').split(':')[0]; }
+function isActionableProactive(c) {
+  if (c.type !== 'proactive') return true;       // gate applies only to proactive
+  const k = proactiveKind(c);
+  if (k === 'stall' || k === 'pastend' || k === 'quiet') return !!(c.job_id || c.client);
+  if (k === 'bottleneck') return !!c.person && !isOperator(c.person);
+  return false;                                  // anything else (aggregates) → suppressed
+}
+
 function parseFlags(args) {
   const out = { _: [] };
   for (let i = 0; i < args.length; i++) {
@@ -97,44 +124,50 @@ function cmdSweep() {
 
   for (const ctx of jobs) {
     const lu = (ctx.last_updated || {}).date;
-    // quiet job — no update in quiet_days
+    // quiet job — a SPECIFIC job with no update in quiet_days (anomaly + decision)
     if (lu && daysBetween(lu, t) >= d.quiet_days) {
-      cands.push({ type: 'proactive', job_id: ctx.job_id, client: ctx.client,
-        text: `${ctx.client || 'Job #' + ctx.job_id} has gone quiet — no update in ${daysBetween(lu, t)} days`,
-        confidence: 'medium', dedupe: `quiet:${lu}` });
+      cands.push({ type: 'proactive', kind: 'quiet', job_id: ctx.job_id, client: ctx.client,
+        text: `${ctx.client || 'Job #' + ctx.job_id} has gone quiet — no update in ${daysBetween(lu, t)} days. Still active?`,
+        confidence: 'medium', dedupe: `quiet:${ctx.job_id}:${lu}` });
     }
-    // past planned completion — today beyond the last scheduled phase end
+    // past planned completion — a SPECIFIC job past its last scheduled phase end
     const phases = ((ctx.schedule_ref || {}).phases || []).filter(p => p.end);
     if (phases.length) {
       const lastEnd = phases.map(p => p.end).sort().pop();
       if (lastEnd < t) {
         const past = daysBetween(lastEnd, t);
-        cands.push({ type: 'proactive', job_id: ctx.job_id, client: ctx.client,
-          text: `${ctx.client || 'Job #' + ctx.job_id} is ${past} day(s) past its planned completion (${lastEnd})`,
-          detail: `Last planned phase ended ${lastEnd}; check actual status.`, confidence: 'high', dedupe: `pastend:${lastEnd}` });
+        cands.push({ type: 'proactive', kind: 'stall', job_id: ctx.job_id, client: ctx.client,
+          text: `${ctx.client || 'Job #' + ctx.job_id} is ${past} day(s) past its planned completion (${lastEnd}) — stalled?`,
+          detail: `Last planned phase ended ${lastEnd}; check actual status.`, confidence: 'high', dedupe: `pastend:${ctx.job_id}:${lastEnd}` });
       }
     }
   }
 
-  // bottlenecked people — one assignee with many open commitments across jobs
+  // Bottlenecked RESOURCE — a non-operator (sub/contractor) whom multiple jobs
+  // are waiting on. Counts DISTINCT jobs (the constraint), not raw task totals,
+  // and excludes the office (an operator carrying many tasks is workload, not a
+  // bottleneck). Framed as a decision.
   const ledger = readJSON(LEDGER, []);
   const open = ledger.filter(x => x.status === 'open');
   const byWho = {};
   for (const it of open) {
     const who = it.delegated_to || it.who;
-    if (!who) continue;
+    if (!who || isOperator(who)) continue;
     (byWho[who] = byWho[who] || []).push(it);
   }
   for (const [who, items] of Object.entries(byWho)) {
-    if (items.length >= d.bottleneck) {
-      const jobsN = new Set(items.map(x => x.job || x.client).filter(Boolean)).size;
-      cands.push({ type: 'proactive', job_id: null, client: null,
-        text: `${who} is carrying ${items.length} open task(s)${jobsN ? ` across ${jobsN} job(s)/client(s)` : ''}`,
-        confidence: 'medium', dedupe: `bottleneck:${who}:${items.length}` });
+    const jobsSet = new Set(items.map(x => x.job || x.client).filter(Boolean));
+    if (jobsSet.size >= d.bottleneck) {
+      cands.push({ type: 'proactive', kind: 'bottleneck', job_id: null, client: null, person: who,
+        text: `${jobsSet.size} jobs are waiting on ${who} this week — bottleneck?`,
+        detail: `${items.length} open task(s) for ${who} across ${jobsSet.size} job(s)/client(s).`,
+        confidence: 'medium', dedupe: `bottleneck:${who}:${jobsSet.size}` });
     }
   }
 
-  const filtered = cands.filter(c => passesSensitivity(c.confidence, d.sensitivity));
+  // Actionability gate: drop any proactive card that isn't a specific,
+  // actionable anomaly (pure aggregates/counts never get sent).
+  const filtered = cands.filter(c => isActionableProactive(c) && passesSensitivity(c.confidence, d.sensitivity));
   const n = inf.add(filtered);
   console.log(`🔭 sweep: ${n} new proactive candidate(s) logged (mode: ${d.mode}, sensitivity: ${d.sensitivity}).`);
 }
@@ -256,6 +289,16 @@ function cmdObserve() {
 
 function cmdConfig() { outJSON({ ok: true, ...dial(), open_candidates: inf.openCandidates().length }); }
 
+// One-time / periodic cleanup: reject any already-logged proactive candidate
+// that doesn't clear the actionability gate (e.g. legacy aggregate cards).
+function cmdPrune() {
+  let pruned = 0;
+  for (const c of inf.openCandidates()) {
+    if (!isActionableProactive(c)) { inf.setStatus(c.id, 'rejected', 'actionability-gate'); pruned++; }
+  }
+  console.log(`pruned ${pruned} non-actionable candidate(s).`);
+}
+
 async function main() {
   const cmd = process.argv[2];
   const f = parseFlags(process.argv.slice(3));
@@ -267,6 +310,7 @@ async function main() {
     case 'accept': return cmdInfAccept(f);
     case 'reject': return cmdInfReject(f);
     case 'config': return cmdConfig();
+    case 'prune': return cmdPrune();
     default:
       console.log('inference-cli.js (§4 observation mode)\n  infer-on-approve --job N --client ".." --note ".."\n  sweep\n  observe\n  config');
       process.exit(cmd ? 1 : 0);
